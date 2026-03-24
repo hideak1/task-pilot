@@ -1,0 +1,245 @@
+/* Task Pilot - Textual CSS */
+/* Color scheme from mockup: dark bg, red/green/yellow/blue accents */
+
+Screen {
+    background: #0c0e12;
+}
+
+/* ── Header Bar ── */
+#header-bar {
+    dock: top;
+    height: 3;
+    background: #111318;
+    color: #e2e4e9;
+    border-bottom: solid #181b22;
+    padding: 0 2;
+}
+
+#header-bar .logo {
+    color: #74c0fc;
+    text-style: bold;
+}
+
+#header-bar .stats {
+    color: #8b8fa3;
+    dock: right;
+}
+
+/* ── Section Headers ── */
+.section-header {
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+    margin-top: 1;
+}
+
+.section-header-action {
+    color: #ff6b6b;
+    background: rgba(255, 107, 107, 0.08);
+}
+
+.section-header-working {
+    color: #69db7c;
+    background: rgba(105, 219, 124, 0.06);
+}
+
+.section-header-done {
+    color: #555869;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* ── Task Row ── */
+.task-row {
+    height: 3;
+    padding: 0 2;
+    background: #111318;
+    margin: 0 0 0 0;
+    border-bottom: solid #181b22;
+}
+
+.task-row:hover {
+    background: #181b22;
+}
+
+.task-row:focus {
+    background: #181b22;
+    border-left: thick #74c0fc;
+}
+
+.task-row .status-icon {
+    width: 4;
+    min-width: 4;
+}
+
+.task-row .task-title {
+    color: #e2e4e9;
+}
+
+.task-row .task-meta {
+    color: #555869;
+    dock: right;
+}
+
+/* Status-specific colors */
+.status-action {
+    color: #ff6b6b;
+}
+
+.status-working {
+    color: #69db7c;
+}
+
+.status-done {
+    color: #555869;
+}
+
+/* ── Detail Screen ── */
+#detail-screen {
+    background: #0c0e12;
+}
+
+.breadcrumb {
+    height: 1;
+    padding: 0 2;
+    color: #555869;
+}
+
+.detail-title {
+    height: 2;
+    padding: 0 2;
+    color: #e2e4e9;
+    text-style: bold;
+}
+
+.badge {
+    padding: 0 1;
+}
+
+.badge-action {
+    color: #ff6b6b;
+    background: rgba(255, 107, 107, 0.12);
+}
+
+.badge-working {
+    color: #69db7c;
+    background: rgba(105, 219, 124, 0.10);
+}
+
+.badge-done {
+    color: #555869;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* ── Summary Card ── */
+.card {
+    background: #111318;
+    border: solid #181b22;
+    margin: 1 2;
+    padding: 1 2;
+}
+
+.card-title {
+    color: #8b8fa3;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+/* ── Action Steps ── */
+.action-step {
+    height: 2;
+    padding: 0 1;
+}
+
+.action-step-number {
+    color: #ffd43b;
+    width: 4;
+    min-width: 4;
+    text-style: bold;
+}
+
+.action-step-done {
+    color: #555869;
+    text-style: strike;
+}
+
+/* ── Timeline ── */
+.timeline-entry {
+    height: 2;
+    padding: 0 1;
+}
+
+.timeline-dot {
+    width: 3;
+    min-width: 3;
+}
+
+.timeline-dot-start {
+    color: #69db7c;
+}
+
+.timeline-dot-blocked {
+    color: #ffd43b;
+}
+
+.timeline-dot-stopped {
+    color: #ff6b6b;
+}
+
+.timeline-dot-end {
+    color: #555869;
+}
+
+.timeline-time {
+    color: #555869;
+    width: 12;
+    min-width: 12;
+}
+
+.timeline-description {
+    color: #8b8fa3;
+}
+
+/* ── Footer ── */
+#footer-bar {
+    dock: bottom;
+    height: 1;
+    background: #111318;
+    color: #555869;
+    padding: 0 2;
+    border-top: solid #181b22;
+}
+
+.hotkey {
+    color: #74c0fc;
+    text-style: bold;
+}
+
+/* ── Search ── */
+#search-bar {
+    dock: top;
+    height: 3;
+    background: #181b22;
+    border-bottom: solid #181b22;
+    padding: 0 2;
+    display: none;
+}
+
+#search-bar.visible {
+    display: block;
+}
+
+#search-input {
+    background: #111318;
+    color: #e2e4e9;
+    border: solid #74c0fc;
+}
+
+/* ── Scrollbar ── */
+Scrollbar {
+    background: #111318;
+    color: #181b22;
+}
+
+ScrollBar > .scrollbar--bar {
+    color: #555869;
+}
