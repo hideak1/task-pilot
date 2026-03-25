@@ -25,6 +25,7 @@ from click.testing import CliRunner
 from task_pilot.app import TaskPilotApp
 from task_pilot.cli import main
 from task_pilot.db import Database
+from task_pilot import hooks as hooks_module
 from task_pilot.hooks import (
     HookInstaller,
     handle_heartbeat,
@@ -41,6 +42,17 @@ from task_pilot.widgets.action_steps import ActionStepRow, ActionSteps
 from task_pilot.widgets.header_bar import HeaderBar
 from task_pilot.widgets.task_row import TaskRow
 from task_pilot.widgets.timeline import Timeline, TimelineEntry
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_heartbeat_throttle():
+    """Clear heartbeat throttle cache before each test."""
+    hooks_module._last_heartbeat.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -133,15 +145,16 @@ class TestScenario1FullHookLifecycle:
 
         initial_updated = task.updated_at
 
-        # 2. heartbeat x3 -> task stays working, updated_at advances
-        for i in range(3):
-            time.sleep(0.01)  # ensure updated_at advances
-            hb_id = handle_heartbeat(db, session_id)
-            assert hb_id == task_id
-            task = db.get_task(task_id)
-            assert task.status == "working"
-
+        # 2. heartbeat -> task stays working (throttled: only first one writes)
+        hb_id = handle_heartbeat(db, session_id)
+        assert hb_id == task_id
+        task = db.get_task(task_id)
+        assert task.status == "working"
         assert task.updated_at >= initial_updated
+
+        # Subsequent heartbeats within 30s are throttled (return None)
+        hb_id2 = handle_heartbeat(db, session_id)
+        assert hb_id2 is None
 
         # 3. stop -> task becomes action_required
         stop_id = handle_stop(db, session_id)

@@ -23,16 +23,24 @@ class Summarizer:
 
     COMMAND_KEYWORDS = ("scp", "ssh", "copy", "upload", "download", "rsync", "curl", "wget")
 
-    def from_transcript(self, path: Path) -> str | None:
-        """Generate summary from transcript. Try claude CLI first, fall back to heuristic."""
+    def from_transcript(self, path: Path, use_cli: bool = False) -> str | None:
+        """Generate summary from transcript.
+
+        Args:
+            path: Path to .jsonl transcript file.
+            use_cli: If True, try claude CLI first (CAUTION: this spawns a
+                     Claude session which can trigger hooks — only use when
+                     explicitly requested, never in automated scan loops).
+        """
         messages = self._parse_transcript(path)
         if not messages:
             return None
 
-        prompt = self._build_prompt(messages)
-        summary = self._try_claude_cli(prompt)
-        if summary:
-            return summary
+        if use_cli:
+            prompt = self._build_prompt(messages)
+            summary = self._try_claude_cli(prompt)
+            if summary:
+                return summary
 
         return self._heuristic_summary(messages)
 

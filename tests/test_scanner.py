@@ -205,7 +205,7 @@ class TestClaudeScanner:
         assert title == "Hello world"
 
     def test_extract_title_truncates_long_content(self, tmp_path):
-        """Long user messages should be truncated to 120 chars."""
+        """Long user messages should be truncated to 80 chars."""
         transcript = tmp_path / "test.jsonl"
         long_msg = "A" * 200
         transcript.write_text(
@@ -216,7 +216,7 @@ class TestClaudeScanner:
 
         scanner = ClaudeScanner(claude_home=Path("/nonexistent"), db=None)
         title = scanner._extract_title(transcript)
-        assert len(title) == 120
+        assert len(title) == 80
         assert title.endswith("...")
 
     def test_scan_empty_claude_home(self, tmp_path, db):

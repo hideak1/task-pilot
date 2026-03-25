@@ -51,6 +51,10 @@ class TaskPilotApp(App):
     def action_refresh(self) -> None:
         from task_pilot.screens.list_screen import ListScreen
 
-        self._run_scan()
         list_screen = self.query_one(ListScreen)
         list_screen.refresh_tasks()
+
+    def action_full_scan(self) -> None:
+        """Manual full scan (Shift+R)."""
+        self._run_scan()
+        self.action_refresh()

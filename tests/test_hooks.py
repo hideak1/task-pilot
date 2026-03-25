@@ -3,6 +3,7 @@
 import json
 
 from task_pilot.db import Database
+from task_pilot import hooks
 from task_pilot.hooks import (
     HookInstaller,
     handle_heartbeat,
@@ -166,6 +167,9 @@ def test_handle_stop_unknown_session(tmp_path):
 def test_handle_heartbeat_marks_working(tmp_path):
     db = Database(tmp_path / "test.db")
     try:
+        # Clear throttle cache so this test isn't affected by prior tests
+        hooks._last_heartbeat.clear()
+
         task_id = handle_session_start(
             db, session_id="sess-1", project_dir="/home/user/myproject", pid=1234
         )

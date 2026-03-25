@@ -47,7 +47,7 @@ def test_from_transcript_uses_claude_when_available(tmp_path: Path) -> None:
     ])
     summarizer = Summarizer()
     with patch.object(summarizer, "_try_claude_cli", return_value="Claude summary"):
-        summary = summarizer.from_transcript(path)
+        summary = summarizer.from_transcript(path, use_cli=True)
     assert summary == "Claude summary"
 
 

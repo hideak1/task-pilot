@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from task_pilot.db import Database
+from task_pilot import hooks
 from task_pilot.hooks import (
     handle_heartbeat,
     handle_session_end,
@@ -15,6 +16,11 @@ from task_pilot.hooks import (
     handle_stop,
 )
 
+
+@pytest.fixture(autouse=True)
+def _clear_heartbeat_throttle():
+    """Clear heartbeat throttle cache before each test."""
+    hooks._last_heartbeat.clear()
 
 @pytest.fixture()
 def db(tmp_path: Path) -> Database:

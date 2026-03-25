@@ -144,6 +144,33 @@ def handle_session_end(db: Database, session_id: str) -> str | None:
     db.mark_session_inactive(session_id)
     db.mark_task_done(task_id)
 
+    # Generate heuristic summary from transcript (no CLI call — avoids
+    # spawning another Claude session which would trigger hooks again)
+    session = db.get_session(session_id)
+    if session and session.transcript_path:
+        try:
+            from pathlib import Path
+
+            from task_pilot.summarizer import Summarizer
+
+            summarizer = Summarizer()
+            transcript_path = Path(session.transcript_path)
+            if transcript_path.exists():
+                summary = summarizer.from_transcript(
+                    transcript_path, use_cli=False
+                )
+                if summary:
+                    task = db.get_task(task_id)
+                    if task and not task.summary:
+                        db.upsert_task(
+                            task_id=task_id,
+                            title=task.title,
+                            status="done",
+                            summary=summary,
+                        )
+        except Exception:
+            pass
+
     db.add_timeline_event(
         task_id=task_id,
         session_id=session_id,
@@ -175,16 +202,28 @@ def handle_stop(db: Database, session_id: str) -> str | None:
     return task_id
 
 
+_last_heartbeat: dict[str, float] = {}
+HEARTBEAT_THROTTLE_SECONDS = 30
+
+
 def handle_heartbeat(db: Database, session_id: str) -> str | None:
     """Handle a heartbeat from a Claude Code session.
 
-    Returns the task_id, or None if session not found.
+    Throttled: writes to DB at most once per 30 seconds per session.
+    Returns the task_id, or None if session not found or throttled.
     """
+    import time
+
+    now = time.time()
+    last = _last_heartbeat.get(session_id, 0)
+    if now - last < HEARTBEAT_THROTTLE_SECONDS:
+        return None  # throttled, skip DB write
+
     task_id = db.get_task_id_for_session(session_id)
     if task_id is None:
         return None
 
-    # Ensure task is marked as working
     db.update_task_status(task_id, "working")
+    _last_heartbeat[session_id] = now
 
     return task_id
