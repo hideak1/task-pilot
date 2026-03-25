@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -31,24 +30,22 @@ def test_heuristic_summary(tmp_path: Path) -> None:
         {"type": "assistant", "message": {"content": "Done! I've created app.py with endpoints for CRUD."}},
     ])
     summarizer = Summarizer()
-    # Force heuristic path by mocking claude CLI to fail
-    with patch.object(summarizer, "_try_claude_cli", return_value=None):
-        summary = summarizer.from_transcript(path)
+    summary = summarizer.from_transcript(path)
     assert summary is not None
     assert len(summary) > 0
     assert "REST API" in summary
     assert "CRUD" in summary
 
 
-def test_from_transcript_uses_claude_when_available(tmp_path: Path) -> None:
+def test_from_transcript_returns_heuristic(tmp_path: Path) -> None:
     path = make_transcript(tmp_path, [
         {"type": "user", "message": {"content": "Hello"}},
         {"type": "assistant", "message": {"content": "Hi there"}},
     ])
     summarizer = Summarizer()
-    with patch.object(summarizer, "_try_claude_cli", return_value="Claude summary"):
-        summary = summarizer.from_transcript(path, use_cli=True)
-    assert summary == "Claude summary"
+    summary = summarizer.from_transcript(path)
+    assert "Hello" in summary
+    assert "Hi there" in summary
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +65,6 @@ def test_extract_action_items_from_transcript(tmp_path: Path) -> None:
     summarizer = Summarizer()
     items = summarizer.extract_action_items(path)
     assert len(items) >= 2
-    # Verify specific items were found
     combined = " ".join(items)
     assert "scp" in combined.lower()
     assert "train.py" in combined
@@ -150,21 +146,3 @@ def test_parse_transcript_skips_blank_lines(tmp_path: Path) -> None:
     summarizer = Summarizer()
     messages = summarizer._parse_transcript(path)
     assert len(messages) == 2
-
-
-# ---------------------------------------------------------------------------
-# _try_claude_cli
-# ---------------------------------------------------------------------------
-
-def test_try_claude_cli_timeout() -> None:
-    summarizer = Summarizer()
-    with patch("task_pilot.summarizer.subprocess.run", side_effect=TimeoutError):
-        result = summarizer._try_claude_cli("test prompt")
-    assert result is None
-
-
-def test_try_claude_cli_not_found() -> None:
-    summarizer = Summarizer()
-    with patch("task_pilot.summarizer.subprocess.run", side_effect=FileNotFoundError):
-        result = summarizer._try_claude_cli("test prompt")
-    assert result is None

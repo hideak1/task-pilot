@@ -157,7 +157,7 @@ def handle_session_end(db: Database, session_id: str) -> str | None:
             transcript_path = Path(session.transcript_path)
             if transcript_path.exists():
                 summary = summarizer.from_transcript(
-                    transcript_path, use_cli=False
+                    transcript_path
                 )
                 if summary:
                     task = db.get_task(task_id)

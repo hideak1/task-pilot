@@ -405,10 +405,7 @@ class TestScenario4SummarizerIntegration:
         transcript_path = _build_transcript_file(tmp_path, messages)
 
         summarizer = Summarizer()
-
-        # Mock _try_claude_cli to avoid calling real claude CLI
-        with patch.object(summarizer, "_try_claude_cli", return_value=None):
-            summary = summarizer.from_transcript(transcript_path)
+        summary = summarizer.from_transcript(transcript_path)
 
         assert summary is not None
         assert "CI/CD" in summary or "Set up" in summary
@@ -444,8 +441,7 @@ class TestScenario4SummarizerIntegration:
         transcript_path.write_text("")
 
         summarizer = Summarizer()
-        with patch.object(summarizer, "_try_claude_cli", return_value=None):
-            summary = summarizer.from_transcript(transcript_path)
+        summary = summarizer.from_transcript(transcript_path)
         assert summary is None
 
         items = summarizer.extract_action_items(transcript_path)
@@ -456,8 +452,7 @@ class TestScenario4SummarizerIntegration:
         fake_path = tmp_path / "nonexistent.jsonl"
 
         summarizer = Summarizer()
-        with patch.object(summarizer, "_try_claude_cli", return_value=None):
-            summary = summarizer.from_transcript(fake_path)
+        summary = summarizer.from_transcript(fake_path)
         assert summary is None
 
         items = summarizer.extract_action_items(fake_path)

@@ -80,7 +80,7 @@ class ClaudeScanner:
                 summary = None
                 if transcript_path:
                     summary = self.summarizer.from_transcript(
-                        transcript_path, use_cli=False
+                        transcript_path
                     )
 
                 task_id = str(uuid.uuid4())
