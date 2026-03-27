@@ -405,7 +405,7 @@ class TestScenario4SummarizerIntegration:
         transcript_path = _build_transcript_file(tmp_path, messages)
 
         summarizer = Summarizer()
-        summary = summarizer.from_transcript(transcript_path)
+        summary = summarizer.summarize(transcript_path)
 
         assert summary is not None
         assert "CI/CD" in summary or "Set up" in summary
@@ -441,7 +441,7 @@ class TestScenario4SummarizerIntegration:
         transcript_path.write_text("")
 
         summarizer = Summarizer()
-        summary = summarizer.from_transcript(transcript_path)
+        summary = summarizer.summarize(transcript_path)
         assert summary is None
 
         items = summarizer.extract_action_items(transcript_path)
@@ -452,7 +452,7 @@ class TestScenario4SummarizerIntegration:
         fake_path = tmp_path / "nonexistent.jsonl"
 
         summarizer = Summarizer()
-        summary = summarizer.from_transcript(fake_path)
+        summary = summarizer.summarize(fake_path)
         assert summary is None
 
         items = summarizer.extract_action_items(fake_path)

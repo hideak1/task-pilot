@@ -183,8 +183,9 @@ class TestClaudeScanner:
         # Use a very large PID that's unlikely to exist
         assert scanner._is_pid_alive(999999999) is False
 
-    def test_extract_title_from_transcript(self, tmp_path):
-        """_extract_title should return the first user message content."""
+    def test_title_from_transcript(self, tmp_path):
+        """title_from_transcript should return the first user message content."""
+        from task_pilot.summarizer import Summarizer
         transcript = tmp_path / "test.jsonl"
         lines = [
             json.dumps(
@@ -200,12 +201,13 @@ class TestClaudeScanner:
         ]
         transcript.write_text("\n".join(lines))
 
-        scanner = ClaudeScanner(claude_home=Path("/nonexistent"), db=None)
-        title = scanner._extract_title(transcript)
+        summarizer = Summarizer()
+        title = summarizer.title_from_transcript(transcript)
         assert title == "Hello world"
 
-    def test_extract_title_truncates_long_content(self, tmp_path):
-        """Long user messages should be truncated to 80 chars."""
+    def test_title_truncates_long_content(self, tmp_path):
+        """Long user messages should be truncated to 60 chars."""
+        from task_pilot.summarizer import Summarizer
         transcript = tmp_path / "test.jsonl"
         long_msg = "A" * 200
         transcript.write_text(
@@ -214,9 +216,9 @@ class TestClaudeScanner:
             )
         )
 
-        scanner = ClaudeScanner(claude_home=Path("/nonexistent"), db=None)
-        title = scanner._extract_title(transcript)
-        assert len(title) == 80
+        summarizer = Summarizer()
+        title = summarizer.title_from_transcript(transcript)
+        assert len(title) == 60
         assert title.endswith("...")
 
     def test_scan_empty_claude_home(self, tmp_path, db):

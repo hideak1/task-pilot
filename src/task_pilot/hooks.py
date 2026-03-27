@@ -144,8 +144,7 @@ def handle_session_end(db: Database, session_id: str) -> str | None:
     db.mark_session_inactive(session_id)
     db.mark_task_done(task_id)
 
-    # Generate heuristic summary from transcript (no CLI call — avoids
-    # spawning another Claude session which would trigger hooks again)
+    # Generate heuristic summary (zero cost, no external calls)
     session = db.get_session(session_id)
     if session and session.transcript_path:
         try:
@@ -156,12 +155,12 @@ def handle_session_end(db: Database, session_id: str) -> str | None:
             summarizer = Summarizer()
             transcript_path = Path(session.transcript_path)
             if transcript_path.exists():
-                summary = summarizer.from_transcript(
-                    transcript_path
-                )
-                if summary:
-                    task = db.get_task(task_id)
-                    if task and not task.summary:
+                task = db.get_task(task_id)
+                if task and not task.summary:
+                    summary = summarizer.summarize(
+                        transcript_path, use_ai=False
+                    )
+                    if summary:
                         db.upsert_task(
                             task_id=task_id,
                             title=task.title,
