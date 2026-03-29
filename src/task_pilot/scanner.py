@@ -42,13 +42,6 @@ class ClaudeScanner:
             pid = active_info["pid"] if active_info else None
             is_active = pid is not None and self._is_pid_alive(pid)
 
-            # Title: history > transcript first message > "Untitled"
-            title = history_titles.get(session_id)
-            if not title and transcript_path:
-                title = self.summarizer.title_from_transcript(transcript_path)
-            if not title:
-                title = "Untitled"
-
             cwd = active_info.get("cwd") if active_info else None
             started_at = None
             if active_info and active_info.get("startedAt"):
@@ -65,11 +58,23 @@ class ClaudeScanner:
                     transcript_path=str(transcript_path) if transcript_path else None,
                 )
             else:
-                # Historical session: heuristic summary only (zero cost)
+                # New session: try AI for active, heuristic for historical
+                use_ai = is_active
+
+                # Title: history > AI > first message
+                title = history_titles.get(session_id)
+                if not title and transcript_path:
+                    title = self.summarizer.generate_title(
+                        transcript_path, use_ai=use_ai
+                    )
+                if not title:
+                    title = "Untitled"
+
+                # Summary
                 summary = None
                 if transcript_path:
                     summary = self.summarizer.summarize(
-                        transcript_path, use_ai=False
+                        transcript_path, use_ai=use_ai
                     )
 
                 task_id = str(uuid.uuid4())

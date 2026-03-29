@@ -1,15 +1,23 @@
 """Summary generator for Claude Code session transcripts.
 
 Strategy:
-- Historical sessions: first user message truncated to ~60 chars (zero cost)
-- Active/new sessions: try Codex MCP for real summary, fallback to first message
+- Title: try codex exec → fallback to first user message (~60 chars)
+- Summary: try codex exec → fallback to first user message
+- Codex is safe: separate OpenAI process, no Claude Code hooks triggered
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+CODEX_TIMEOUT = 30  # seconds
 
 
 class Summarizer:
@@ -25,11 +33,38 @@ class Summarizer:
 
     COMMAND_KEYWORDS = ("scp", "ssh", "copy", "upload", "download", "rsync", "curl", "wget")
 
-    # ── Title (cheap, always local) ──────────────────────────────
+    # ── Title ────────────────────────────────────────────────────
+
+    def generate_title(self, path: Path, use_ai: bool = True) -> str:
+        """Generate a short title for a session.
+
+        Tries codex exec first, falls back to first user message.
+        """
+        messages = self._parse_transcript(path)
+        if not messages:
+            return "Untitled"
+
+        if use_ai:
+            snippet = self._build_snippet(messages)
+            ai_title = self._run_codex(
+                f"Generate a short title (under 50 chars, no quotes) for this coding session:\n\n{snippet}"
+            )
+            if ai_title:
+                # Clean up: strip quotes, truncate
+                ai_title = ai_title.strip().strip('"').strip("'")
+                if len(ai_title) > 60:
+                    ai_title = ai_title[:57] + "..."
+                return ai_title
+
+        # Fallback: first user message
+        return self._title_from_first_message(messages)
 
     def title_from_transcript(self, path: Path) -> str:
-        """Extract a short title from the first user message. Pure local, zero cost."""
+        """Local-only title extraction (zero cost). Used for historical sessions."""
         messages = self._parse_transcript(path)
+        return self._title_from_first_message(messages)
+
+    def _title_from_first_message(self, messages: list[dict]) -> str:
         for msg in messages:
             if msg.get("type") not in ("user", "human"):
                 continue
@@ -41,7 +76,6 @@ class Summarizer:
     @staticmethod
     def _clean_title(raw: str) -> str:
         text = re.sub(r"<[^>]+>", "", raw).strip()
-        # Take first non-empty line
         for line in text.splitlines():
             line = line.strip()
             if line:
@@ -51,54 +85,59 @@ class Summarizer:
             text = text[:57] + "..."
         return text
 
-    # ── Summary (tries AI, falls back to local) ─────────────────
+    # ── Summary ──────────────────────────────────────────────────
 
     def summarize(self, path: Path, use_ai: bool = True) -> str | None:
         """Generate a summary.
 
-        If use_ai=True, tries Codex first, then falls back to heuristic.
-        If use_ai=False, uses heuristic only.
+        Tries codex exec first, falls back to first user message.
         """
         messages = self._parse_transcript(path)
         if not messages:
             return None
 
         if use_ai:
-            ai_summary = self._try_codex(messages)
+            snippet = self._build_snippet(messages)
+            ai_summary = self._run_codex(
+                f"Summarize this Claude Code session in 1-2 sentences. "
+                f"Focus on WHAT was accomplished.\n\n{snippet}"
+            )
             if ai_summary:
                 return ai_summary
 
-        return self._heuristic_summary(messages)
+        # Fallback
+        return self._title_from_first_message(messages)
 
-    def _try_codex(self, messages: list[dict]) -> str | None:
-        """Try to use Codex MCP for summarization. Returns None on failure."""
-        # This is called externally by the hook/scanner layer which has
-        # access to the MCP runtime. We provide the prompt builder here,
-        # but the actual MCP call must be done by the caller.
-        # So this returns None — the caller should use build_summary_prompt()
-        # and call codex themselves.
+    # ── Codex CLI ────────────────────────────────────────────────
+
+    @staticmethod
+    def _run_codex(prompt: str) -> str | None:
+        """Run codex exec in read-only sandbox. Returns output or None."""
+        if not shutil.which("codex"):
+            return None
+        try:
+            result = subprocess.run(
+                ["codex", "exec", "--sandbox", "read-only", prompt],
+                capture_output=True,
+                text=True,
+                timeout=CODEX_TIMEOUT,
+            )
+            output = result.stdout.strip()
+            if result.returncode == 0 and output:
+                return output
+        except (subprocess.TimeoutExpired, OSError) as e:
+            logger.debug(f"Codex exec failed: {e}")
         return None
 
-    def build_summary_prompt(self, path: Path) -> str | None:
-        """Build a prompt suitable for Codex/AI summarization.
-
-        Returns a prompt string, or None if transcript is empty.
-        Sends only the first 3 and last 3 user/assistant messages
-        to keep token cost low.
-        """
-        messages = self._parse_transcript(path)
-        if not messages:
-            return None
-
-        # Filter to user/assistant only
+    def _build_snippet(self, messages: list[dict]) -> str:
+        """Build a short transcript snippet for AI (first 3 + last 3 messages)."""
         conversations = [
             m for m in messages
             if m.get("type") in ("user", "human", "assistant")
         ]
         if not conversations:
-            return None
+            return ""
 
-        # Take first 3 + last 3 (deduplicated)
         if len(conversations) <= 6:
             sample = conversations
         else:
@@ -109,27 +148,11 @@ class Summarizer:
             role = "User" if msg.get("type") in ("user", "human") else "Assistant"
             text = self._get_text_content(msg)
             if text:
-                # Truncate individual messages
                 if len(text) > 300:
                     text = text[:297] + "..."
                 parts.append(f"{role}: {text}")
 
-        transcript_text = "\n\n".join(parts)
-        return (
-            "Summarize this Claude Code session in 1-2 sentences. "
-            "Focus on WHAT was accomplished, not HOW.\n\n"
-            f"{transcript_text}"
-        )
-
-    def _heuristic_summary(self, messages: list[dict]) -> str:
-        """Fallback: first user message as title."""
-        for msg in messages:
-            if msg.get("type") not in ("user", "human"):
-                continue
-            text = self._get_text_content(msg)
-            if text:
-                return self._clean_title(text)
-        return ""
+        return "\n\n".join(parts)
 
     # ── Action Items ─────────────────────────────────────────────
 
@@ -171,7 +194,6 @@ class Summarizer:
 
     @staticmethod
     def _get_text_content(msg: dict) -> str:
-        """Extract text from a message, handling string and list-of-blocks."""
         message = msg.get("message", {})
         content = message.get("content", "")
         if isinstance(content, str):
@@ -187,7 +209,6 @@ class Summarizer:
         return ""
 
     def _parse_transcript(self, path: Path) -> list[dict]:
-        """Parse .jsonl transcript file into list of message dicts."""
         if not path.exists():
             return []
 

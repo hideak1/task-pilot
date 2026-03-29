@@ -144,7 +144,7 @@ def handle_session_end(db: Database, session_id: str) -> str | None:
     db.mark_session_inactive(session_id)
     db.mark_task_done(task_id)
 
-    # Generate heuristic summary (zero cost, no external calls)
+    # Generate title + summary via codex (falls back to heuristic)
     session = db.get_session(session_id)
     if session and session.transcript_path:
         try:
@@ -156,16 +156,25 @@ def handle_session_end(db: Database, session_id: str) -> str | None:
             transcript_path = Path(session.transcript_path)
             if transcript_path.exists():
                 task = db.get_task(task_id)
-                if task and not task.summary:
-                    summary = summarizer.summarize(
-                        transcript_path, use_ai=False
-                    )
-                    if summary:
+                if task:
+                    new_title = task.title
+                    new_summary = task.summary
+
+                    # Generate AI title if current title looks like a fallback
+                    if not new_title or new_title == "Untitled" or len(new_title) > 55:
+                        ai_title = summarizer.generate_title(transcript_path, use_ai=True)
+                        if ai_title:
+                            new_title = ai_title
+
+                    if not new_summary:
+                        new_summary = summarizer.summarize(transcript_path, use_ai=True)
+
+                    if new_title != task.title or new_summary != task.summary:
                         db.upsert_task(
                             task_id=task_id,
-                            title=task.title,
+                            title=new_title,
                             status="done",
-                            summary=summary,
+                            summary=new_summary,
                         )
         except Exception:
             pass
