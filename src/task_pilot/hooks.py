@@ -144,41 +144,6 @@ def handle_session_end(db: Database, session_id: str) -> str | None:
     db.mark_session_inactive(session_id)
     db.mark_task_done(task_id)
 
-    # Generate title + summary via codex (falls back to heuristic)
-    session = db.get_session(session_id)
-    if session and session.transcript_path:
-        try:
-            from pathlib import Path
-
-            from task_pilot.summarizer import Summarizer
-
-            summarizer = Summarizer()
-            transcript_path = Path(session.transcript_path)
-            if transcript_path.exists():
-                task = db.get_task(task_id)
-                if task:
-                    new_title = task.title
-                    new_summary = task.summary
-
-                    # Generate AI title if current title looks like a fallback
-                    if not new_title or new_title == "Untitled" or len(new_title) > 55:
-                        ai_title = summarizer.generate_title(transcript_path, use_ai=True)
-                        if ai_title:
-                            new_title = ai_title
-
-                    if not new_summary:
-                        new_summary = summarizer.summarize(transcript_path, use_ai=True)
-
-                    if new_title != task.title or new_summary != task.summary:
-                        db.upsert_task(
-                            task_id=task_id,
-                            title=new_title,
-                            status="done",
-                            summary=new_summary,
-                        )
-        except Exception:
-            pass
-
     db.add_timeline_event(
         task_id=task_id,
         session_id=session_id,
