@@ -19,46 +19,60 @@ Task Pilot is a terminal dashboard that tracks your Claude Code sessions, surfac
 
 ## Features
 
-- **Real-time tracking** — Claude Code hooks automatically capture session events (start, heartbeat, stop, end)
-- **Session scanner** — Discovers existing sessions from `~/.claude/` on startup
+- **Real-time tracking** — Claude Code hooks capture session events (start, heartbeat, stop, end)
+- **Auto-scan** — Discovers existing sessions from `~/.claude/` on startup, no manual scan needed
+- **AI-powered summaries** — Uses [Codex CLI](https://github.com/openai/codex) to generate titles and summaries for active sessions; falls back to first user message for historical sessions (zero cost)
 - **Three-section dashboard** — Tasks grouped by: Action Required / Working / Done
 - **Detail view** — Summary, action steps checklist, timeline for each task
 - **Session resume** — Press `c` to resume any session in a new terminal
 - **Search** — Press `/` to filter tasks by title
 - **Auto-refresh** — Dashboard updates every 5 seconds
+- **Heartbeat throttle** — Hook writes limited to once per 30s per session
 - **Responsive** — Adapts to terminal width
 
 ## Quick Start
 
 ```bash
-# Install with uv
-uv pip install -e .
+# Install
+uv venv && uv pip install -e .
 
-# Install Claude Code hooks (one-time setup)
-task-pilot install-hooks
+# Install Claude Code hooks (one-time)
+uv run task-pilot install-hooks
 
-# Launch the dashboard
-task-pilot ui
+# Launch (auto-scans on startup)
+uv run task-pilot ui
 ```
+
+For AI-powered titles and summaries, install [Codex CLI](https://github.com/openai/codex). Without it, titles fall back to the first user message.
 
 ## Architecture
 
 ```
-SQLite DB  <──  Hooks (real-time)  <──  Claude Code sessions
-    |       <──  Scanner (backfill) <──  ~/.claude/ files
+SQLite DB  <──  Hooks (real-time)    <──  Claude Code sessions
+    |       <──  Scanner (auto-scan) <──  ~/.claude/ files
+    |       <──  Codex CLI (summary) <──  OpenAI (optional)
     v
   Textual TUI ── List View ── Detail View
 ```
 
+### Summary Strategy
+
+| Scenario | Title | Summary | Cost |
+|----------|-------|---------|------|
+| Historical session (ended) | First user message (~60 chars) | Same | 0 |
+| Active session (discovered) | Codex AI -> fallback | Codex AI -> fallback | OpenAI token |
+| Session ends (hook) | Already generated | Already generated | 0 |
+
+### Modules
+
 | Layer | Description |
 |-------|-------------|
-| `models.py` | Dataclasses: Task, Session, ActionItem, TimelineEvent |
+| `summarizer.py` | AI title/summary via Codex CLI, heuristic fallback |
 | `db.py` | SQLite CRUD with schema auto-migration |
-| `hooks.py` | Claude Code hook installer + event handlers |
+| `hooks.py` | Claude Code hook installer + throttled event handlers |
 | `scanner.py` | Reads `~/.claude/` to discover sessions |
-| `summarizer.py` | Transcript parsing + summary generation |
 | `cli.py` | Click CLI entry point |
-| `app.py` | Textual app shell |
+| `app.py` | Textual app shell with auto-scan on startup |
 | `screens/` | List screen + Detail screen |
 | `widgets/` | HeaderBar, TaskRow, ActionSteps, Timeline |
 
@@ -81,7 +95,7 @@ SQLite DB  <──  Hooks (real-time)  <──  Claude Code sessions
 # Setup
 uv venv && uv pip install -e ".[dev]"
 
-# Run tests (102 tests)
+# Run tests (106 tests)
 uv run pytest tests/ -v
 
 # Run the app
@@ -95,3 +109,4 @@ uv run task-pilot ui
 - [Rich](https://rich.readthedocs.io/) — Terminal rendering
 - [Click](https://click.palletsprojects.com/) — CLI
 - SQLite3 — Local storage
+- [Codex CLI](https://github.com/openai/codex) — AI summaries (optional)
