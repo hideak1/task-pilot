@@ -41,20 +41,33 @@ def get_outer_tmux_session() -> str | None:
 
 
 def bootstrap_tmux_session() -> None:
-    """Create the task-pilot tmux session from scratch."""
-    tmux.new_session(SESSION_NAME, window_name="main", width=200, height=50)
+    """Create the task-pilot tmux session from scratch.
+
+    Pilot runs in the left pane (main.0). We use tmux's direct-command
+    invocation (new-session with a command argument) rather than
+    send_keys, which avoids a race between shell init and keystroke
+    injection. The command is wrapped in a shell that prints the exit
+    status and waits for Enter on failure, so any startup crash is
+    visible to the user instead of silently closing the pane.
+    """
+    python_cmd = sys.executable
+    pilot_cmd = (
+        f"{python_cmd} -m task_pilot.textual_app --watchdog; "
+        f"ec=$?; if [ $ec -ne 0 ]; then "
+        f"echo; echo 'pilot exited with code '$ec; "
+        f"echo 'Press Enter to close this pane.'; read _; fi"
+    )
+
+    tmux.new_session(SESSION_NAME, window_name="main", width=200, height=50, command=pilot_cmd)
+
     tmux.set_option(SESSION_NAME, "mouse", "on")
     tmux.set_option(SESSION_NAME, "status", "off", global_opt=True)
     # Disable mouse-wheel copy-mode trap (spec lines 452-461)
     tmux.unbind_key("root", "WheelUpPane")
     tmux.unbind_key("root", "WheelDownPane")
+    # Add right pane for Claude Code sessions. -P prints info, -d means
+    # don't focus the new pane so pilot keeps focus on the left.
     tmux.split_window(f"{SESSION_NAME}:main", percent=70, horizontal=True)
-    # Use the CURRENT python interpreter (sys.executable). This is the venv python
-    # when launched via `uv run task-pilot ui`. Without this, tmux's default shell
-    # would call system `python` which doesn't have task_pilot installed.
-    python_cmd = sys.executable
-    tmux.send_keys(f"{SESSION_NAME}:main.0",
-                   f"exec {python_cmd} -m task_pilot.textual_app --watchdog")
     tmux.send_keys(f"{SESSION_NAME}:main.1", PLACEHOLDER_RIGHT)
 
 

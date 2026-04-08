@@ -42,9 +42,22 @@ def window_exists(session: str, window: str) -> bool:
     return window in list_windows(session)
 
 
-def new_session(name: str, window_name: str = "main", width: int = 200, height: int = 50) -> None:
-    """Create a new detached tmux session."""
-    run(["new-session", "-d", "-s", name, "-n", window_name, "-x", str(width), "-y", str(height)], check=True)
+def new_session(
+    name: str,
+    window_name: str = "main",
+    width: int = 200,
+    height: int = 50,
+    command: str | None = None,
+) -> None:
+    """Create a new detached tmux session.
+
+    If `command` is given, it runs instead of the default shell in the
+    initial pane. Use a `sh -c` wrapper if you need quoting/fallback.
+    """
+    args = ["new-session", "-d", "-s", name, "-n", window_name, "-x", str(width), "-y", str(height)]
+    if command is not None:
+        args.extend(["sh", "-c", command])
+    run(args, check=True)
 
 
 def kill_session(name: str) -> None:
