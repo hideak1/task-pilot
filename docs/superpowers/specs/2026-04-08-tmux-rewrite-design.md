@@ -371,10 +371,9 @@ Each row is 3 lines:
 - **Freshly created session:** placeholder `"New session"` with the cwd basename.
 - **After first user message:** extract the first user message from the transcript.
   Clean XML tags, strip to first line, truncate to 60 chars.
-- **Background AI upgrade (optional):** every 30 seconds, for sessions whose
-  title is still a fallback, call `codex exec --sandbox read-only` to generate
-  a better one. Failures silently fall back to the heuristic title. This is the
-  only external process pilot spawns.
+
+No AI/LLM calls. Pilot never invokes any model. The title comes purely from
+local file parsing.
 
 ### Status detection
 
@@ -585,7 +584,7 @@ make sure the terminal font supports box-drawing characters and emoji
 
 ### Keep
 - `src/task_pilot/config.py`
-- `src/task_pilot/summarizer.py` (title extraction; codex fallback kept)
+- (none — `summarizer.py` is deleted; title extraction moves to `transcript_reader.py`)
 - `src/task_pilot/db.py` (schema changes, CRUD preserved)
 
 ### Rewrite
@@ -702,7 +701,6 @@ Goal:
 | User's tmux config overrides our key bindings           | Pilot operates from within its Textual app; tmux prefix keys do not conflict |
 | VS Code terminal intercepts `Ctrl+` combos              | `:q` command mode avoids modifiers entirely              |
 | Nested TUI rendering (Claude in tmux in VS Code term)   | Tested combination; widely used in practice              |
-| `codex exec` for AI titles being slow or absent         | Already optional; falls back silently                    |
 | Long transcripts slow down token counting               | Tail-read only; cache last-read offset                   |
 | Git branch lookup is slow on network filesystems        | Cache per session; only refresh on explicit `r`          |
 
@@ -720,12 +718,7 @@ These are intentional unknowns to be answered during implementation:
    wheel handling. Phase 6 will test on the three platforms (macOS Terminal,
    Linux gnome-terminal, VS Code Remote-SSH).
 
-3. **`codex exec` token cost ceiling** — calling `codex exec` once per session
-   per 30s could add up if the user has 10+ sessions. Phase 4 may need a
-   global rate limit (e.g. at most one `codex exec` call per minute,
-   round-robin across sessions that need a title upgrade).
-
-4. **Reconciliation of `current_session_id` when adopted** — if pilot crashed
+3. **Reconciliation of `current_session_id` when adopted** — if pilot crashed
    while a session was visible in `main.1`, after restart we have a `_bg_*`
    window adopted from tmux but `current_session_id` is unset. The current
    spec says to clear `current_session_id` (right pane shows whatever was in
