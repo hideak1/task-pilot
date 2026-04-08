@@ -20,6 +20,9 @@ class ListScreen(Screen):
         ("up,k", "move_up", "Up"),
         ("down,j", "move_down", "Down"),
         ("r", "force_refresh", "Refresh"),
+        ("n", "new_session", "New"),
+        ("x", "close_session", "Close"),
+        ("enter", "switch_to_selected", "Switch"),
     ]
 
     DEFAULT_CSS = """
@@ -83,3 +86,33 @@ class ListScreen(Screen):
 
     async def action_force_refresh(self) -> None:
         await self.refresh_data(force=True)
+
+    def action_new_session(self) -> None:
+        from task_pilot.widgets.new_session_dialog import NewSessionDialog
+
+        def handle(cwd: str | None) -> None:
+            if cwd:
+                from task_pilot.git_branch import current_branch
+                s = self.tracker.create_session(
+                    cwd=cwd, git_branch=current_branch(cwd)
+                )
+                self.tracker.switch_to(s.id)
+                self.run_worker(self.refresh_data(), exclusive=False)
+
+        self.app.push_screen(NewSessionDialog(), handle)
+
+    def action_close_session(self) -> None:
+        sessions = self.db.list_sessions()
+        if not sessions:
+            return
+        target = sessions[self._selected_index]
+        # TODO confirmation dialog in 5.3 — for now just close
+        self.tracker.close_session(target.id)
+        self.run_worker(self.refresh_data(), exclusive=False)
+
+    def action_switch_to_selected(self) -> None:
+        sessions = self.db.list_sessions()
+        if not sessions:
+            return
+        target = sessions[self._selected_index]
+        self.tracker.switch_to(target.id)
