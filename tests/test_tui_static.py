@@ -2,6 +2,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import patch
 import pytest
 from task_pilot.db import Database
 from task_pilot.models import Session
@@ -30,24 +31,26 @@ async def test_app_launches_with_two_seeded_sessions():
     db, path = make_db()
     seed(db)
     db.close()
-    app = TaskPilotTextualApp(db_path=Path(path))
-    async with app.run_test() as pilot:
-        # ListScreen mounted
-        from task_pilot.screens.list_screen import ListScreen
-        screens = [s for s in app.screen_stack if isinstance(s, ListScreen)]
-        assert len(screens) == 1
-        # Two SessionRow widgets
-        from task_pilot.widgets.session_row import SessionRow
-        rows = list(app.screen.query(SessionRow))
-        assert len(rows) == 2
+    with patch("task_pilot.session_tracker.SessionTracker.reconcile"):
+        app = TaskPilotTextualApp(db_path=Path(path))
+        async with app.run_test() as pilot:
+            # ListScreen mounted
+            from task_pilot.screens.list_screen import ListScreen
+            screens = [s for s in app.screen_stack if isinstance(s, ListScreen)]
+            assert len(screens) == 1
+            # Two SessionRow widgets
+            from task_pilot.widgets.session_row import SessionRow
+            rows = list(app.screen.query(SessionRow))
+            assert len(rows) == 2
 
 
 @pytest.mark.asyncio
 async def test_app_launches_with_empty_db():
     db, path = make_db()
     db.close()
-    app = TaskPilotTextualApp(db_path=Path(path))
-    async with app.run_test() as pilot:
-        from textual.widgets import Static
-        empties = [s for s in app.screen.query(Static) if "No sessions" in str(s.render())]
-        assert len(empties) >= 1
+    with patch("task_pilot.session_tracker.SessionTracker.reconcile"):
+        app = TaskPilotTextualApp(db_path=Path(path))
+        async with app.run_test() as pilot:
+            from textual.widgets import Static
+            empties = [s for s in app.screen.query(Static) if "No sessions" in str(s.render())]
+            assert len(empties) >= 1

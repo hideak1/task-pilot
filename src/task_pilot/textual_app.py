@@ -6,9 +6,11 @@ from pathlib import Path
 
 from textual.app import App
 
+from task_pilot import tmux
 from task_pilot.config import DB_PATH, TASK_PILOT_DIR
 from task_pilot.db import Database
 from task_pilot.screens.list_screen import ListScreen
+from task_pilot.session_tracker import SessionTracker
 
 
 class TaskPilotTextualApp(App):
@@ -21,7 +23,8 @@ class TaskPilotTextualApp(App):
     def on_mount(self) -> None:
         TASK_PILOT_DIR.mkdir(parents=True, exist_ok=True)
         self.db = Database(self._db_path)
-        self.push_screen(ListScreen(self.db))
+        self.tracker = SessionTracker(self.db, tmux=tmux)
+        self.push_screen(ListScreen(self.db, self.tracker))
 
 
 def main() -> None:

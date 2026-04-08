@@ -8,8 +8,15 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_reconcile():
+    with patch("task_pilot.session_tracker.SessionTracker.reconcile"):
+        yield
 
 from task_pilot.db import Database
 from task_pilot.models import Session, SessionState
