@@ -122,3 +122,16 @@ def test_switch_to_noop_when_target_already_current():
     tracker.switch_to("A")
     fake_tmux.swap_pane.assert_not_called()
     assert db.get_current_session_id() == "A"
+
+
+def test_refresh_state_returns_dict_for_all_sessions(tmp_path):
+    db = make_db()
+    db.insert_session(Session(
+        id="x", tmux_window="_bg_x", cwd=str(tmp_path),
+        git_branch=None, started_at=time.time(), title=None,
+    ))
+    fake_tmux = MagicMock()
+    tracker = SessionTracker(db, tmux=fake_tmux, session_name="task-pilot")
+    states = tracker.refresh_state()
+    assert "x" in states
+    assert states["x"].status in ("initializing", "working", "idle", "unknown")

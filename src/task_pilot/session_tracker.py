@@ -22,6 +22,61 @@ class SessionTracker:
         self.db = db
         self.tmux = tmux
         self.session_name = session_name
+        from task_pilot.models import SessionState
+        self._state_cache: dict[str, SessionState] = {}
+
+    def refresh_state(self, force: bool = False) -> dict[str, "SessionState"]:
+        """Compute SessionState for every session in DB.
+
+        force=True re-resolves git branches and transcript paths (used by manual `r`).
+        """
+        from task_pilot.git_branch import current_branch
+        from task_pilot.transcript_reader import sum_tokens, last_activity_timestamp, extract_first_user_message
+        from task_pilot.transcript_resolver import resolve_by_cwd_and_time, resolve_by_pid
+        from task_pilot.models import SessionState
+        import time
+
+        result: dict[str, SessionState] = {}
+        for s in self.db.list_sessions():
+            state = self._state_cache.get(s.id) or SessionState(session_id=s.id)
+
+            # Resolve transcript path if not cached or forced
+            if state.transcript_path is None or force:
+                state.transcript_path = resolve_by_cwd_and_time(
+                    s.cwd, s.started_at,
+                )
+
+            if state.transcript_path and state.transcript_path.exists():
+                state.token_count = sum_tokens(state.transcript_path)
+                state.last_activity = last_activity_timestamp(state.transcript_path)
+
+                # Status
+                if state.last_activity == 0:
+                    state.status = "initializing"
+                elif time.time() - state.last_activity < 30:
+                    state.status = "working"
+                else:
+                    state.status = "idle"
+
+                # Title from first user message (only if not set yet)
+                if not s.title:
+                    first = extract_first_user_message(state.transcript_path)
+                    if first:
+                        from task_pilot.title_clean import clean_title
+                        title = clean_title(first)
+                        self.db.update_session(s.id, title=title)
+            else:
+                state.status = "initializing"
+
+            # Git branch (cached unless forced)
+            if force or s.git_branch is None:
+                branch = current_branch(s.cwd)
+                if branch and branch != s.git_branch:
+                    self.db.update_session(s.id, git_branch=branch)
+
+            self._state_cache[s.id] = state
+            result[s.id] = state
+        return result
 
     # ── lifecycle ────────────────────────────────────────────
 
