@@ -94,3 +94,8 @@ def display_message(target: str, format_string: str) -> str:
     """Run `tmux display-message -p -t <target> <format>` and return the output."""
     result = run(["display-message", "-p", "-t", target, format_string])
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def unbind_key(table: str, key: str) -> None:
+    """Unbind a key in the given key table (`root`, `prefix`, etc.)."""
+    run(["unbind-key", "-T", table, key], check=True)

@@ -46,8 +46,9 @@ def bootstrap_tmux_session() -> None:
     tmux.new_session(SESSION_NAME, window_name="main", width=200, height=50)
     tmux.set_option(SESSION_NAME, "mouse", "on")
     tmux.set_option(SESSION_NAME, "status", "off", global_opt=True)
-    # Disable mouse-wheel copy-mode trap
-    tmux.run(["set-option", "-t", SESSION_NAME, "-g", "@disable-copy-mode-on-wheel", "on"])
+    # Disable mouse-wheel copy-mode trap (spec lines 452-461)
+    tmux.unbind_key("root", "WheelUpPane")
+    tmux.unbind_key("root", "WheelDownPane")
     tmux.split_window(f"{SESSION_NAME}:main", percent=70, horizontal=True)
     # Phase 1 placeholders
     tmux.send_keys(f"{SESSION_NAME}:main.0", PLACEHOLDER_LEFT)

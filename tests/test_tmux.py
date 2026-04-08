@@ -95,3 +95,11 @@ def test_display_message_returns_stripped():
         mock.return_value = MagicMock(returncode=0, stdout="/home/user\n", stderr="")
         result = tmux.display_message("task-pilot:_bg_x.0", "#{pane_current_path}")
         assert result == "/home/user"
+
+
+def test_unbind_key_calls_correct_args():
+    with patch("task_pilot.tmux.run") as mock:
+        mock.return_value = MagicMock(returncode=0)
+        tmux.unbind_key("root", "WheelUpPane")
+        args = mock.call_args[0][0]
+        assert args == ["unbind-key", "-T", "root", "WheelUpPane"]
