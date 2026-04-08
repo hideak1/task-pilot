@@ -23,7 +23,7 @@ class ListScreen(Screen):
         ("n", "new_session", "New"),
         ("x", "close_session", "Close"),
         ("enter", "switch_to_selected", "Switch"),
-        ("colon", "open_command", "Command"),
+        ("colon,shift+semicolon", "open_command", "Command"),
         ("slash", "open_search", "Search"),
     ]
 
@@ -84,14 +84,14 @@ class ListScreen(Screen):
             await container.mount(row)
 
     async def action_move_up(self) -> None:
-        sessions = self.db.list_sessions()
+        sessions = self._filtered_sessions()
         if not sessions:
             return
         self._selected_index = max(0, self._selected_index - 1)
         await self._render_rows()
 
     async def action_move_down(self) -> None:
-        sessions = self.db.list_sessions()
+        sessions = self._filtered_sessions()
         if not sessions:
             return
         self._selected_index = min(len(sessions) - 1, self._selected_index + 1)
@@ -105,19 +105,29 @@ class ListScreen(Screen):
 
         def handle(cwd: str | None) -> None:
             if cwd:
-                from task_pilot.git_branch import current_branch
-                s = self.tracker.create_session(
-                    cwd=cwd, git_branch=current_branch(cwd)
-                )
-                self.tracker.switch_to(s.id)
+                from pathlib import Path as _P
+                if not _P(cwd).is_dir():
+                    self.notify(f"E: not a directory: {cwd}", severity="error")
+                    return
+                try:
+                    from task_pilot.git_branch import current_branch
+                    s = self.tracker.create_session(
+                        cwd=cwd, git_branch=current_branch(cwd)
+                    )
+                    self.tracker.switch_to(s.id)
+                except Exception as e:  # noqa: BLE001
+                    self.notify(f"E: create failed: {e}", severity="error")
+                    return
                 self.run_worker(self.refresh_data(), exclusive=False)
 
         self.app.push_screen(NewSessionDialog(), handle)
 
     def action_close_session(self) -> None:
-        sessions = self.db.list_sessions()
+        sessions = self._filtered_sessions()
         if not sessions:
             return
+        if self._selected_index >= len(sessions):
+            self._selected_index = len(sessions) - 1
         target = sessions[self._selected_index]
         from task_pilot.widgets.confirm_dialog import ConfirmDialog
 
@@ -133,9 +143,11 @@ class ListScreen(Screen):
         )
 
     def action_switch_to_selected(self) -> None:
-        sessions = self.db.list_sessions()
+        sessions = self._filtered_sessions()
         if not sessions:
             return
+        if self._selected_index >= len(sessions):
+            self._selected_index = len(sessions) - 1
         target = sessions[self._selected_index]
         self.tracker.switch_to(target.id)
 
@@ -153,8 +165,23 @@ class ListScreen(Screen):
         self.app.push_screen(CommandBar(), handle)
 
     def _quit_pilot(self) -> None:
-        from task_pilot import tmux as tmux_mod
-        tmux_mod.kill_session("task-pilot")
+        """Kill the tmux session and exit pilot.
+
+        Order matters: we must NOT kill the tmux session before app.exit()
+        because pilot itself runs inside that session — killing it first
+        would terminate pilot mid-execution. Instead, fire a detached
+        subprocess that waits briefly then runs `tmux kill-session`,
+        and immediately call app.exit() so pilot's pane shuts down cleanly
+        before tmux tears everything down.
+        """
+        import subprocess
+        subprocess.Popen(
+            ["sh", "-c", "sleep 0.3 && tmux kill-session -t task-pilot"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
         self.app.exit()
 
     def action_open_search(self) -> None:
