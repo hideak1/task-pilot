@@ -23,6 +23,7 @@ class ListScreen(Screen):
         ("n", "new_session", "New"),
         ("x", "close_session", "Close"),
         ("enter", "switch_to_selected", "Switch"),
+        ("colon", "open_command", "Command"),
     ]
 
     DEFAULT_CSS = """
@@ -125,3 +126,21 @@ class ListScreen(Screen):
             return
         target = sessions[self._selected_index]
         self.tracker.switch_to(target.id)
+
+    def action_open_command(self) -> None:
+        from task_pilot.widgets.command_bar import CommandBar
+
+        def handle(cmd: str | None) -> None:
+            if cmd is None:
+                return
+            if cmd in ("q", "q!", "quit"):
+                self._quit_pilot()
+            else:
+                self.notify(f"E: not a command: {cmd}", severity="error")
+
+        self.app.push_screen(CommandBar(), handle)
+
+    def _quit_pilot(self) -> None:
+        from task_pilot import tmux as tmux_mod
+        tmux_mod.kill_session("task-pilot")
+        self.app.exit()
