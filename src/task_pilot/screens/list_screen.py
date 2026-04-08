@@ -8,7 +8,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Static
 
 from task_pilot.db import Database
-from task_pilot.models import SessionState
+from task_pilot.models import Session, SessionState
 from task_pilot.session_tracker import SessionTracker
 from task_pilot.widgets.session_row import SessionRow
 
@@ -24,6 +24,7 @@ class ListScreen(Screen):
         ("x", "close_session", "Close"),
         ("enter", "switch_to_selected", "Switch"),
         ("colon", "open_command", "Command"),
+        ("slash", "open_search", "Search"),
     ]
 
     DEFAULT_CSS = """
@@ -41,6 +42,7 @@ class ListScreen(Screen):
         self.tracker = tracker
         self._selected_index = 0
         self._states: dict[str, SessionState] = {}
+        self._search_query: str = ""
 
     def compose(self) -> ComposeResult:
         with ScrollableContainer(id="rows"):
@@ -56,10 +58,20 @@ class ListScreen(Screen):
         self._states = self.tracker.refresh_state(force=force)
         await self._render_rows()
 
+    def _filtered_sessions(self) -> list[Session]:
+        sessions = self.db.list_sessions()
+        if not self._search_query:
+            return sessions
+        q = self._search_query.lower()
+        return [
+            s for s in sessions
+            if q in (s.title or "").lower() or q in s.cwd.lower()
+        ]
+
     async def _render_rows(self) -> None:
         container = self.query_one("#rows", ScrollableContainer)
         await container.remove_children()
-        sessions = self.db.list_sessions()
+        sessions = self._filtered_sessions()
         if not sessions:
             await container.mount(Static("No sessions. Press n to create one."))
             return
@@ -144,3 +156,16 @@ class ListScreen(Screen):
         from task_pilot import tmux as tmux_mod
         tmux_mod.kill_session("task-pilot")
         self.app.exit()
+
+    def action_open_search(self) -> None:
+        from task_pilot.widgets.search_bar import SearchBar
+
+        def on_change(query: str) -> None:
+            self._search_query = query
+            self.run_worker(self._render_rows(), exclusive=False)
+
+        def on_close() -> None:
+            self._search_query = ""
+            self.run_worker(self._render_rows(), exclusive=False)
+
+        self.app.push_screen(SearchBar(on_change, on_close))
