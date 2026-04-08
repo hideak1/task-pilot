@@ -81,87 +81,168 @@ directly.
 
 ### Launcher (`task-pilot ui`)
 
-```
-if in tmux AND tmux session is "task-pilot":
-    run Textual app directly (developer mode)
-elif not in tmux:
-    if tmux has-session -t task-pilot:
-        tmux attach -t task-pilot          # reattach existing session
-    else:
-        tmux new-session -d -s task-pilot  # first time: create
-        tmux split-window -h -t task-pilot:main
-        tmux send-keys -t task-pilot:main.0 "python -m task_pilot.textual_app" Enter
-        tmux set -t task-pilot mouse on
-        tmux attach -t task-pilot
-elif in tmux but not task-pilot:
-    exec inside outer tmux with a nested tmux?  # Rejected: too messy.
-    print error and exit.
+```python
+def main():
+    # Pre-flight checks
+    if not shutil.which("tmux"):
+        die("tmux is not installed. Install via your package manager.")
+    if not shutil.which("claude"):
+        die("claude CLI not found in PATH. Install Claude Code first.")
+
+    in_tmux = bool(os.environ.get("TMUX"))
+    current_session = (
+        subprocess.check_output(["tmux", "display-message", "-p", "#S"]).strip()
+        if in_tmux else None
+    )
+
+    if in_tmux and current_session == "task-pilot":
+        # Developer mode: we're already inside our session, just run the app
+        run_textual_app()
+        return
+
+    if in_tmux and current_session != "task-pilot":
+        # User is in some other tmux session
+        if tmux_has_session("task-pilot"):
+            print("You are inside tmux session", current_session)
+            print("Run:    tmux switch-client -t task-pilot")
+            print("Or detach (Ctrl-b d) then re-run task-pilot ui")
+        else:
+            print("You are inside tmux session", current_session)
+            print("Detach first (Ctrl-b d), then run task-pilot ui")
+        sys.exit(1)
+
+    # Not in tmux at all
+    if tmux_has_session("task-pilot"):
+        os.execvp("tmux", ["tmux", "attach", "-t", "task-pilot"])
+
+    # First-time bootstrap
+    bootstrap_tmux_session()
+    os.execvp("tmux", ["tmux", "attach", "-t", "task-pilot"])
+
+
+def bootstrap_tmux_session():
+    tmux("new-session", "-d", "-s", "task-pilot", "-n", "main",
+         "-x", "200", "-y", "50")          # detached so we can configure it
+    tmux("set", "-t", "task-pilot", "mouse", "on")
+    tmux("set", "-t", "task-pilot", "-g", "status", "off")  # hide tmux status bar
+    tmux("split-window", "-h", "-t", "task-pilot:main", "-l", "70%")
+    # Left pane runs pilot under a wrapper that restarts it on crash
+    tmux("send-keys", "-t", "task-pilot:main.0",
+         "exec python -m task_pilot.textual_app --watchdog", "Enter")
 ```
 
-This is idempotent: re-running `task-pilot ui` always returns the user to the
-correct state.
+`--watchdog` makes the Textual entry point trap exceptions and re-launch
+itself; if it crashes 3+ times in 60s it stays dead and prints a message
+in the left pane. The right pane (`main.1`) starts as a plain shell with a
+prompt — see Phase 1 for the placeholder text.
 
-### Switching sessions (swap-pane mechanism)
+This is idempotent: re-running `task-pilot ui` either attaches to the
+existing session, runs the Textual app inside it, or prints actionable
+guidance for unusual nested-tmux situations. There is no path that
+silently fails.
+
+### Switching sessions (two-step swap-pane protocol)
 
 tmux does not allow "hiding" a pane, but a pane can be moved between windows
-while keeping its child process running. To display session B when A is currently
-visible:
+while keeping its child process running. A naive single swap breaks the
+invariant that session X's Claude process lives in `_bg_<X>` — after one
+switch, DB records would point to the wrong windows. The fix is a **two-step
+swap protocol**: before showing a new session, first return the currently
+visible session's pane back to its home `_bg_<current>` window.
 
-```
-tmux swap-pane -s task-pilot:main.1 -t task-pilot:_bg_<B>.0
+```python
+def switch_to(target_id: str) -> None:
+    current_id = db.get_current_session_id()  # nullable
+    if current_id:
+        # Step 1: return current's pane from main.1 back to its home window
+        tmux("swap-pane", "-s", "task-pilot:main.1",
+                          "-t", f"task-pilot:_bg_{current_id}.0")
+    # Step 2: bring target's pane from its home window into main.1
+    tmux("swap-pane", "-s", "task-pilot:main.1",
+                      "-t", f"task-pilot:_bg_{target_id}.0")
+    db.set_current_session_id(target_id)
 ```
 
-After this call:
-- The pane containing session A's Claude Code moves into window `_bg_<A>`.
-- The pane containing session B's Claude Code moves into `main.1` (right side).
-- Neither Claude Code process is killed or restarted.
-- User sees session B in the right pane.
+After this sequence:
+- Each session's Claude Code pane lives in `_bg_<its_uuid>` whenever it is NOT
+  the currently-visible session.
+- The currently-visible session's pane lives in `main.1`.
+- `db.current_session_id` tracks which session is currently in `main.1`.
+- Neither Claude Code process is killed or restarted during the swap.
+
+The invariant `session.tmux_window == "_bg_<session.id>"` is preserved as the
+*home* of each session. The only exception at any instant is the one session
+whose id equals `current_session_id` — its pane is temporarily in `main.1`.
+
+**Bootstrap case:** on first session creation, `current_session_id` is `None`
+and `main.1` holds a placeholder shell. The switch code's step 1 is skipped
+(nothing to return home), and step 2 swaps the placeholder out and the new
+session in. The placeholder pane ends up in `_bg_<new>` as an inert extra pane,
+which is harmless — step 2 is actually a single-pane swap; tmux creates the
+pane in the target window if needed. See Phase 1 tests for the exact sequence.
 
 ### Reconciliation (startup)
 
 pilot must be robust to crashes and inconsistent state between DB and tmux:
 
-```
-on pilot startup:
-    tmux_windows = tmux.list_windows("task-pilot")  # set of _bg_* names
+```python
+def reconcile():
+    # 0. Ensure main window is alive (pilot was killed mid-recreation, etc.)
+    if not tmux.window_exists("task-pilot:main"):
+        tmux.recreate_main_window()  # new window + split + restart pilot
+        db.clear_current_session()   # nothing visible
+
+    tmux_windows = tmux.list_windows("task-pilot")  # all _bg_* names
     db_sessions = db.list_sessions()
 
-    # DB has a session but tmux doesn't → it died, remove from DB
+    # 1. DB has a session but tmux window is gone → process died, drop record
     for s in db_sessions:
         if s.tmux_window not in tmux_windows:
             db.delete_session(s.id)
+            if db.get_current_session_id() == s.id:
+                db.clear_current_session()
 
-    # tmux has a window but DB doesn't → adopt it (pilot was restarted)
+    # 2. tmux has a window but DB doesn't → adopt the orphan
+    db_window_names = {s.tmux_window for s in db_sessions}
     for w in tmux_windows:
-        if w not in db_sessions:
-            db.insert_adopted_session(w)
+        if w in db_window_names:
+            continue
+        # Recover what we can from tmux itself
+        cwd = tmux.display("#{pane_current_path}", target=f"{w}.0")
+        # window_activity is in seconds since epoch (tmux 3.0+)
+        started_at = float(tmux.display("#{window_activity}", target=w))
+        adopted_uuid = w[len("_bg_"):]  # the uuid is in the window name
+        db.insert_session(
+            id=adopted_uuid,
+            tmux_window=w,
+            cwd=cwd or "/",
+            git_branch=None,
+            started_at=started_at,
+            title=None,  # will be re-extracted from transcript on next refresh
+        )
 ```
+
+The schema must allow `cwd` to fall back to `/` and `started_at` to fall back
+to current time if tmux variables are unavailable. `git_branch` and `title`
+are nullable and will be filled in by the next refresh tick. The window name
+`_bg_<uuid>` carries the session's stable id, so the adopted record has the
+same id it had before pilot crashed.
 
 ## Data Model
 
-### SQLite schema
-
-```sql
-CREATE TABLE sessions (
-    id              TEXT PRIMARY KEY,     -- pilot UUID
-    tmux_window     TEXT NOT NULL UNIQUE, -- "_bg_<uuid>"
-    cwd             TEXT NOT NULL,
-    git_branch      TEXT,                 -- nullable: not a git repo
-    started_at      REAL NOT NULL,        -- Unix timestamp
-    title           TEXT                  -- extracted / AI-generated
-);
-```
-
-Previous tables (`tasks`, `action_items`, `timeline_events`, old `sessions`) are
-dropped without migration. No user data is lost because the v0.1 DB only
+Previous tables (`tasks`, `action_items`, `timeline_events`, old `sessions`)
+are dropped without migration. No user data is lost because the v0.1 DB only
 contained test data.
 
-### Python dataclass
+### Python dataclasses
+
+Persistent and runtime state are kept in separate dataclasses to avoid the
+common footgun of "which fields go through `db.update`?".
 
 ```python
 @dataclass
 class Session:
-    # Persistent fields
+    """Persistent state — exactly one row in the `sessions` table."""
     id: str
     tmux_window: str
     cwd: str
@@ -169,33 +250,82 @@ class Session:
     started_at: float
     title: str | None
 
-    # Runtime fields (not persisted; computed on each refresh)
+@dataclass
+class SessionState:
+    """Runtime state — owned by SessionTracker, never persisted."""
+    session_id: str
     is_alive: bool = True
     last_activity: float = 0.0
     token_count: int = 0
     claude_session_id: str | None = None
+    transcript_path: Path | None = None
+    status: str = "initializing"  # initializing | working | idle | unknown
 ```
+
+`db.py` only ever reads/writes `Session`. `session_tracker.py` builds a
+`{session_id: SessionState}` dict on each refresh and merges it with the
+persistent records when the UI needs to render a row. The `current_session_id`
+(which session's pane is in `main.1`) is stored in a separate single-row
+`pilot_state` table — see schema below.
+
+### SQLite schema (revised)
+
+```sql
+CREATE TABLE sessions (
+    id              TEXT PRIMARY KEY,     -- pilot UUID
+    tmux_window     TEXT NOT NULL UNIQUE, -- "_bg_<uuid>"
+    cwd             TEXT NOT NULL DEFAULT '/',
+    git_branch      TEXT,
+    started_at      REAL NOT NULL,
+    title           TEXT
+);
+
+CREATE TABLE pilot_state (
+    key             TEXT PRIMARY KEY,
+    value           TEXT
+);
+-- Used for: current_session_id, schema_version, etc.
+```
+
+`cwd` has a `DEFAULT '/'` so the reconciliation adoption path can insert
+records when tmux can't tell us the cwd. `started_at` falls back to
+`time.time()` at insert time inside the adoption code.
 
 ### Finding a Claude Code transcript for a session
 
 When pilot creates a tmux window running `claude`, Claude Code assigns itself
-a new session UUID which pilot does not know in advance. To find the transcript:
+a new session UUID which pilot does not know in advance. To find the transcript,
+use **psutil** for cross-platform process inspection (works on macOS, Linux,
+WSL2 — none of which can rely on `/proc` uniformly).
 
-**Primary method (by PID):**
+**Primary method (by PID via psutil):**
 1. `tmux list-panes -t :_bg_<uuid> -F '#{pane_pid}'` → shell PID
-2. Walk `/proc/<pid>/task/*/children` or use `ps` to find the `claude` child PID
-3. Search `~/.claude/sessions/*.json` for an entry whose `pid` matches
+2. `psutil.Process(shell_pid).children(recursive=True)` → list of descendant
+   processes; find one whose `name()` is `claude` or whose `cmdline()` starts
+   with `claude`
+3. Search `~/.claude/sessions/*.json` for an entry whose `pid` matches the
+   claude PID
 4. That file's `sessionId` field gives the Claude session UUID
 5. Transcript path: `~/.claude/projects/<slug>/<sessionId>.jsonl`
-   where `<slug>` is derived from cwd
+   where `<slug>` is derived from cwd: replace `/` with `-`, prefix with `-`
 
 **Fallback method (by cwd and time):**
 1. Compute slug from cwd: `/Users/foo/bar` → `-Users-foo-bar`
 2. List `.jsonl` files in `~/.claude/projects/<slug>/`
-3. Pick the one whose mtime is after pilot's `started_at` and closest to it
+3. Pick the one whose `ctime` is `>= session.started_at - 2s` and closest to
+   `started_at`. The 2-second tolerance covers clock skew between pilot and
+   Claude Code's file write.
 
-The result is cached in memory; pilot only re-resolves if the cached path
-becomes invalid.
+**Race window:** Claude Code may take up to 5 seconds after launch to write
+its `~/.claude/sessions/*.json` and create the transcript. During this
+window, both methods return `None`. The session row in pilot is shown anyway
+with placeholder values: `claude_session_id=None`, `token_count="—"`, status
+icon shows `[…]` (initializing). The next refresh tick re-attempts resolution.
+After 30 seconds of failed resolution, the row is shown with status `[?]` but
+the session is NOT killed — the user might still want to interact with it.
+
+The successful result is cached in memory; pilot only re-resolves if the
+cached path no longer exists.
 
 ### Token counting
 
@@ -248,9 +378,12 @@ Each row is 3 lines:
 
 ### Status detection
 
-- **Working:** transcript has a new message within the last 30 seconds.
-- **Idle:** no new messages in the last 30 seconds (Claude is waiting for input,
-  or the user stepped away).
+- **Initializing** (`[…]`): session was just created, transcript not yet found
+- **Working** (`[●]`): transcript has a new message within the last 30 seconds
+- **Idle** (`[◐]`): no new messages in the last 30 seconds (Claude is waiting
+  for input, or the user stepped away)
+- **Unknown** (`[?]`): transcript resolution has been failing for >30s; pane
+  is not killed, just flagged
 - Sessions whose tmux window disappears are deleted from the list on the next
   refresh cycle. There is no "closed" state.
 
@@ -269,22 +402,89 @@ written by heartbeats.
 
 ### Keybindings
 
-| Key                 | Action                                           |
-|---------------------|--------------------------------------------------|
-| `↑` / `↓` / `j` / `k` | Move selection                                  |
-| `Enter` / double-click | Shift focus to the right pane (Claude Code)    |
-| `Tab`               | Toggle focus between left and right panes        |
-| `n`                 | Launch new session (open directory picker)       |
-| `x`                 | Close selected session (confirmation dialog)     |
-| `/`                 | Search (filter by title or cwd)                  |
-| `r`                 | Manual refresh                                   |
-| `:` → `q` → `Enter` | Quit (vim-style command mode, full kill)         |
+| Key                 | Action                                              |
+|---------------------|-----------------------------------------------------|
+| `↑` / `↓` / `j` / `k` | Move selection                                     |
+| `Enter` / double-click | Switch to selected session (swap-pane) and focus right |
+| `Tab`               | Toggle focus between left and right panes           |
+| `n`                 | Launch new session (open directory picker)          |
+| `x`                 | Close selected session (confirmation dialog)        |
+| `/`                 | Search (filter rows by title or cwd substring)      |
+| `r`                 | Force refresh (also re-resolves git branch + transcript path) |
+| `:`                 | Open command bar at the bottom of the left panel    |
+| `:` → `q` → `Enter` | Quit (kills tmux session and all Claude Code processes) |
 
-Mouse:
+**Refresh semantics:**
+- Auto-refresh runs every 2 seconds. It re-reads transcript tails for tokens
+  and `last_activity`, and re-checks tmux window liveness. It uses cached
+  `git_branch`, cached `transcript_path`, and cached `claude_session_id`.
+- Manual `r` does everything auto-refresh does, *plus* re-runs `git -C <cwd>
+  rev-parse --abbrev-ref HEAD`, plus retries failed transcript-path resolution
+  for sessions that are still in the `initializing` or `unknown` state.
+
+**Search behavior (`/`):**
+- Pressing `/` opens a search input at the bottom of the left panel
+- As the user types, rows are **filtered** (non-matching rows are hidden)
+- Match is case-insensitive substring against `title` and `cwd`
+- `Esc` clears the filter and closes the search input
+- Selection persists if the selected row is still in the filtered set, otherwise
+  selection moves to the first visible row
+
+**Command bar (`:`):**
+- Pressing `:` reveals a one-line command bar at the bottom of the left panel:
+  ```
+  ┌────────────────────────────────────┐
+  │ ...rows...                         │
+  ├────────────────────────────────────┤
+  │ :_                                 │
+  └────────────────────────────────────┘
+  ```
+- Implemented as a Textual `Input` widget with the leading `:` prefix
+- Recognized commands (Phase 5):
+  - `:q` + Enter → quit (kill tmux session and all Claude Code processes)
+  - `:q!` + Enter → same as `:q` (vim-style escape hatch)
+  - `Esc` → cancel
+- Unknown commands print a one-line error in the command bar (`E: not a command`)
+- The command bar is the *only* way to quit pilot. There is no `q` keybinding.
+
+### Mouse behavior
+
+Tmux mouse mode is enabled (`set -g mouse on`) so that the user can click
+inside the right pane to give it keyboard focus. To prevent the well-known
+trap where scrolling the wheel inside a pane enters tmux's copy-mode and
+captures the keyboard, pilot's tmux config disables wheel→copy-mode:
+
+```
+unbind-key -T root WheelUpPane
+unbind-key -T root WheelDownPane
+```
+
+These rebinds are applied at bootstrap time via `tmux set -t task-pilot ...`.
+The Claude Code TUI receives wheel events directly and handles them itself
+(scrolling its own conversation history). The user never gets stuck in a
+copy-mode session they didn't ask for.
+
+In the **left panel**, Textual handles its own click events:
 - Click a row → select it
-- Double-click a row → shift focus to right pane
-- Click the right pane → focus follows (tmux mouse mode)
-- Scroll in the right pane → Claude Code scroll (tmux passes through)
+- Double-click a row → switch to that session (swap-pane) and shift focus right
+- Click the command bar / search input → focus the input
+
+### Terminal resize
+
+When the terminal is resized, tmux preserves the **percentage split** of
+panes by default, so the left/right ratio stays roughly 30/70. To make this
+deterministic, the launcher sets:
+
+```
+tmux split-window -h -t task-pilot:main -l 70%
+```
+
+after which a `client-resized` hook is **not** installed — tmux's default
+proportional behavior is sufficient. The Textual app inside the left pane
+re-renders on its `on_resize` event to adapt the row width.
+
+The minimum useful left-panel width is **30 columns**. Below that, row content
+truncates aggressively but the app does not crash. There is no minimum height.
 
 ### New session dialog
 
@@ -312,11 +512,13 @@ Mouse:
   - Multiple matches → complete to longest common prefix
   - Second `Tab` → show candidates (bash-style)
 - `Enter` launches:
-  ```
+  ```python
   uuid = new_uuid()
-  tmux new-window -d -n _bg_<uuid> -c <cwd> 'claude'
-  db.insert(...)
-  tmux swap-pane -s :main.1 -t :_bg_<uuid>.0  # show it immediately
+  tmux("new-window", "-d", "-n", f"_bg_{uuid}", "-c", cwd, "claude")
+  db.insert_session(Session(id=uuid, tmux_window=f"_bg_{uuid}",
+                            cwd=cwd, git_branch=git_branch_of(cwd),
+                            started_at=time.time(), title=None))
+  switch_to(uuid)  # the two-step swap protocol
   ```
 - The session starts as a blank Claude Code (no initial prompt).
 
@@ -327,14 +529,23 @@ Close "Build REST API"? This kills the Claude Code process.
 [y] Yes   [n] No
 ```
 
-On `y`: `tmux kill-window -t :_bg_<uuid>`, then delete from DB.
+On `y`:
+1. If the session being closed is the currently visible one
+   (`db.current_session_id == s.id`), first run a "swap to nothing" maneuver:
+   create a temporary `_scratch` window with a placeholder shell, then
+   `switch_to(scratch)` so the current session's pane returns home; then
+   kill its window. Otherwise just kill its window directly.
+2. `tmux kill-window -t :_bg_<uuid>`
+3. `db.delete_session(uuid)`
+4. If `current_session_id` was the closed one, clear it. The right pane now
+   shows the placeholder shell from step 1.
 
 ### Quit (`:q` + Enter)
 
 Full shutdown of everything:
-1. For each session in DB: `tmux kill-window`
+1. For each session in DB: `tmux kill-window -t :<window>`
 2. `tmux kill-session -t task-pilot`
-3. Exit the Textual app
+3. Exit the Textual app (process exits)
 
 `:q` is a command-mode sequence modeled after vim: `:` opens a command input,
 `q` is the command, `Enter` executes. This is hard enough to mis-type that
@@ -346,7 +557,7 @@ no confirmation dialog is needed.
 |-------------------------------------------|--------------|
 | macOS (iTerm2, Terminal.app, Kitty, etc.) | ✅ Supported |
 | Linux (any terminal with tmux)            | ✅ Supported |
-| WSL2 on Windows                           | ✅ Supported |
+| WSL2 on Windows                           | ✅ Supported (see notes) |
 | Remote Ubuntu via SSH from any OS         | ✅ Recommended |
 | VS Code Remote-SSH + integrated terminal  | ✅ Supported |
 | Windows native (PowerShell, CMD)          | ❌ Use WSL2  |
@@ -356,13 +567,19 @@ Minimum requirements:
 - Python 3.11+
 - tmux 3.0+
 - Claude Code CLI installed (`claude` in PATH)
+- `psutil` Python package
 - UTF-8 terminal with 256 colors
 
-VS Code users should add this to settings.json if they find `:q` doesn't reach
-the terminal:
-```json
-"terminal.integrated.allowChords": true
-```
+**VS Code Remote-SSH note:** Because pilot uses `:q` (a plain typed sequence)
+instead of `Ctrl+Q` to quit, no VS Code terminal configuration is needed. Just
+make sure the terminal font supports box-drawing characters and emoji
+(`Cascadia Code`, `JetBrains Mono`, or any Nerd Font).
+
+**WSL2 notes:**
+- Windows Terminal's mouse-wheel sequences are handled correctly by tmux
+  ≥ 3.2 — older versions may behave oddly
+- Use a Nerd Font (`Cascadia Code PL`, `MesloLGS NF`) for best Unicode
+  rendering of the row separators and status icons
 
 ## Code Changes
 
@@ -491,7 +708,29 @@ Goal:
 
 ## Open Questions
 
-None. All design decisions resolved during the brainstorming session.
+These are intentional unknowns to be answered during implementation:
+
+1. **psutil binary children on macOS** — `Process.children(recursive=True)` is
+   reliable on Linux but on macOS depends on `libproc`. Does it find a `claude`
+   process spawned by a shell inside a tmux pane? Phase 1 will write a focused
+   smoke test to verify.
+
+2. **Wheel-up rebind compatibility** — `unbind-key -T root WheelUpPane` should
+   prevent copy-mode entry on tmux 3.0+, but Claude Code's TUI may have its own
+   wheel handling. Phase 6 will test on the three platforms (macOS Terminal,
+   Linux gnome-terminal, VS Code Remote-SSH).
+
+3. **`codex exec` token cost ceiling** — calling `codex exec` once per session
+   per 30s could add up if the user has 10+ sessions. Phase 4 may need a
+   global rate limit (e.g. at most one `codex exec` call per minute,
+   round-robin across sessions that need a title upgrade).
+
+4. **Reconciliation of `current_session_id` when adopted** — if pilot crashed
+   while a session was visible in `main.1`, after restart we have a `_bg_*`
+   window adopted from tmux but `current_session_id` is unset. The current
+   spec says to clear `current_session_id` (right pane shows whatever was in
+   `main.1`, possibly the orphan or the placeholder shell). Acceptable but
+   means the user might see unexpected content until they click something.
 
 ## References
 
