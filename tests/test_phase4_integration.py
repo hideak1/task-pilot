@@ -72,11 +72,11 @@ def test_refresh_state_reads_tokens_and_status_from_real_transcript(tmp_path, mo
     # Patch resolve_by_cwd_and_time to look at our fake home.
     # session_tracker does a local `from task_pilot.transcript_resolver import ...`
     # at call time, so we must patch the source module.
+    # Patch where session_tracker imports it from (now module-level after Phase 4 cleanup)
     from task_pilot import transcript_resolver
     original_resolve = transcript_resolver.resolve_by_cwd_and_time
     monkeypatch.setattr(
-        transcript_resolver,
-        "resolve_by_cwd_and_time",
+        "task_pilot.session_tracker.resolve_by_cwd_and_time",
         lambda cwd, started_at, claude_home=None: original_resolve(
             cwd, started_at, claude_home=claude_home or fake_home
         ),

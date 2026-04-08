@@ -11,7 +11,15 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-from task_pilot.models import Session
+from task_pilot.git_branch import current_branch
+from task_pilot.models import Session, SessionState
+from task_pilot.title_clean import clean_title
+from task_pilot.transcript_reader import (
+    extract_first_user_message,
+    last_activity_timestamp,
+    sum_tokens,
+)
+from task_pilot.transcript_resolver import resolve_by_cwd_and_time
 
 if TYPE_CHECKING:
     from task_pilot.db import Database
@@ -22,20 +30,13 @@ class SessionTracker:
         self.db = db
         self.tmux = tmux
         self.session_name = session_name
-        from task_pilot.models import SessionState
         self._state_cache: dict[str, SessionState] = {}
 
-    def refresh_state(self, force: bool = False) -> dict[str, "SessionState"]:
+    def refresh_state(self, force: bool = False) -> dict[str, SessionState]:
         """Compute SessionState for every session in DB.
 
         force=True re-resolves git branches and transcript paths (used by manual `r`).
         """
-        from task_pilot.git_branch import current_branch
-        from task_pilot.transcript_reader import sum_tokens, last_activity_timestamp, extract_first_user_message
-        from task_pilot.transcript_resolver import resolve_by_cwd_and_time
-        from task_pilot.models import SessionState
-        import time
-
         result: dict[str, SessionState] = {}
         for s in self.db.list_sessions():
             state = self._state_cache.get(s.id) or SessionState(session_id=s.id)
@@ -62,7 +63,6 @@ class SessionTracker:
                 if not s.title:
                     first = extract_first_user_message(state.transcript_path)
                     if first:
-                        from task_pilot.title_clean import clean_title
                         title = clean_title(first)
                         self.db.update_session(s.id, title=title)
             else:
