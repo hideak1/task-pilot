@@ -106,9 +106,18 @@ class ListScreen(Screen):
         if not sessions:
             return
         target = sessions[self._selected_index]
-        # TODO confirmation dialog in 5.3 — for now just close
-        self.tracker.close_session(target.id)
-        self.run_worker(self.refresh_data(), exclusive=False)
+        from task_pilot.widgets.confirm_dialog import ConfirmDialog
+
+        def on_confirm(yes: bool | None) -> None:
+            if yes:
+                self.tracker.close_session(target.id)
+                self.run_worker(self.refresh_data(), exclusive=False)
+
+        title = target.title or "this session"
+        self.app.push_screen(
+            ConfirmDialog(f'Close "{title}"? This kills the Claude Code process.'),
+            on_confirm,
+        )
 
     def action_switch_to_selected(self) -> None:
         sessions = self.db.list_sessions()
