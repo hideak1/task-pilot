@@ -37,26 +37,31 @@ class TaskPilotApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        # No auto-scan — only show sessions tracked by hooks going forward.
-        # User can manually trigger a scan with `task-pilot scan` if needed.
-        pass
+        # Scan for currently-running sessions only (PID alive).
+        # Historical sessions are not auto-imported.
+        self._run_scan(active_only=True)
 
-    def _run_scan(self) -> None:
+    def _run_scan(self, active_only: bool = False) -> None:
         try:
             from task_pilot.scanner import ClaudeScanner
 
             scanner = ClaudeScanner(claude_home=self._claude_home, db=self.db)
-            scanner.scan()
+            scanner.scan(active_only=active_only)
         except Exception:
             pass
 
     def action_refresh(self) -> None:
         from task_pilot.screens.list_screen import ListScreen
 
+        # Pick up newly-started Claude Code sessions
+        self._run_scan(active_only=True)
         list_screen = self.query_one(ListScreen)
         list_screen.refresh_tasks()
 
     def action_full_scan(self) -> None:
-        """Manual full scan (Shift+R)."""
-        self._run_scan()
-        self.action_refresh()
+        """Manual full scan (includes historical sessions)."""
+        from task_pilot.screens.list_screen import ListScreen
+
+        self._run_scan(active_only=False)
+        list_screen = self.query_one(ListScreen)
+        list_screen.refresh_tasks()

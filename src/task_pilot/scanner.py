@@ -27,20 +27,34 @@ class ClaudeScanner:
         self.projects_dir = self.claude_home / "projects"
         self.history_file = self.claude_home / "history.jsonl"
 
-    def scan(self):
-        """Run a full scan: sessions, history, transcripts, then reconcile."""
+    def scan(self, active_only: bool = False):
+        """Run a scan.
+
+        Args:
+            active_only: If True, only discover sessions whose PID is alive.
+                         Used at app startup to show currently running sessions
+                         without pulling in all historical data.
+        """
         active_sessions = self._scan_sessions()
         history_titles = self._scan_history()
         transcript_sessions = self._scan_transcripts()
 
-        all_session_ids = set(active_sessions.keys()) | set(transcript_sessions.keys())
+        if active_only:
+            # Only process sessions that have a live PID file
+            candidate_ids = set(active_sessions.keys())
+        else:
+            candidate_ids = set(active_sessions.keys()) | set(transcript_sessions.keys())
 
-        for session_id in all_session_ids:
+        for session_id in candidate_ids:
             active_info = active_sessions.get(session_id)
             transcript_path = transcript_sessions.get(session_id)
 
             pid = active_info["pid"] if active_info else None
             is_active = pid is not None and self._is_pid_alive(pid)
+
+            # In active_only mode, skip sessions whose PID is dead
+            if active_only and not is_active:
+                continue
 
             cwd = active_info.get("cwd") if active_info else None
             started_at = None
