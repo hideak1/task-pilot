@@ -15,10 +15,10 @@ from textual.widgets import Static
 from task_pilot.models import Session, SessionState
 
 STATUS_ICONS = {
-    "initializing": "[#8b8fa3]…[/]",
-    "working":      "[#69db7c]●[/]",
-    "idle":         "[#ffd43b]◐[/]",
-    "unknown":      "[#ff6b6b]?[/]",
+    "initializing": "\\[[#8b8fa3]…[/]]",
+    "working":      "\\[[#69db7c]●[/]]",
+    "idle":         "\\[[#ffd43b]◐[/]]",
+    "unknown":      "\\[[#ff6b6b]?[/]]",
 }
 
 
@@ -86,8 +86,9 @@ class SessionRow(Widget, can_focus=True):
         title = self.session_data.title or "New session"
         if len(title) > 32:
             title = title[:29] + "..."
+        cursor = "[#74c0fc]▸[/] " if self.has_class("selected") else "  "
         icon = STATUS_ICONS.get(self.session_state.status, "?")
-        line1 = f"{title}    {icon}"
+        line1 = f"{cursor}{title}    {icon}"
 
         cwd = abbrev_home(self.session_data.cwd)
         if self.session_data.git_branch:
