@@ -1,6 +1,6 @@
 <p align="center">
   <strong>Task Pilot</strong><br>
-  Terminal UI task manager for Claude Code sessions
+  Terminal dashboard for orchestrating multiple Claude Code sessions
 </p>
 
 <p align="center">
@@ -13,100 +13,111 @@
 
 ## What is Task Pilot?
 
-Task Pilot is a terminal dashboard that tracks your Claude Code sessions, surfaces action items that need your attention, and lets you resume sessions — acting as a dispatcher panel for multi-session workflows.
+Task Pilot is a terminal control panel for running and switching between multiple Claude Code sessions without ever leaving your terminal. It is built on top of **tmux**: a single tmux session named `task-pilot` hosts a left pane (pilot's Textual UI) and a right pane (the currently visible Claude Code session). Every other Claude Code session you launch from pilot lives in a hidden `_bg_<uuid>` window, with its process still running normally.
 
-**The core idea:** You are the CPU (decision-maker), Claude Code is I/O (code executor). When you juggle multiple sessions, you lose context. Task Pilot solves this by giving you a single pane of glass.
+When you pick a different session in the left panel, pilot uses a **two-step swap-pane protocol** to return the currently visible session's pane back to its home `_bg_*` window, then swap the selected session's pane into the right. No session is killed, disconnected, or restarted during the switch.
+
+**Scope (E1):** pilot manages only the sessions *you create from within pilot*. Sessions launched in other terminals are intentionally out of scope.
+
+**Why a rewrite?** The previous v0.1 design relied on Claude Code hooks plus a scanner and an AI summarizer. That path burned tokens in an inner loop and still required you to switch terminals to actually interact with Claude. The tmux model eliminates both problems: zero API calls in the hot path, and the right pane is a real Claude Code TUI you type into directly.
 
 ## Features
 
-- **Real-time tracking** — Claude Code hooks capture session events (start, heartbeat, stop, end)
-- **Auto-scan** — Discovers existing sessions from `~/.claude/` on startup, no manual scan needed
-- **AI-powered summaries** — Uses [Codex CLI](https://github.com/openai/codex) to generate titles and summaries for active sessions; falls back to first user message for historical sessions (zero cost)
-- **Three-section dashboard** — Tasks grouped by: Action Required / Working / Done
-- **Detail view** — Summary, action steps checklist, timeline for each task
-- **Session resume** — Press `c` to resume any session in a new terminal
-- **Search** — Press `/` to filter tasks by title
-- **Auto-refresh** — Dashboard updates every 5 seconds
-- **Heartbeat throttle** — Hook writes limited to once per 30s per session
-- **Responsive** — Adapts to terminal width
+- **Tmux-based orchestration** — no hooks, no API calls, zero token cost
+- **Real-time refresh** — every 2 seconds, reading directly from `~/.claude/projects/*.jsonl`
+- **Live token counting** — tail-reads each transcript and sums `input_tokens + output_tokens` from assistant messages
+- **Status detection** — `initializing` / `working` / `idle` / `unknown`, derived purely from local transcript activity
+- **Per-session context** — working directory (with `~` abbreviation) and git branch shown on each row
+- **Two-step swap-pane switching** — instant visual swap, no process restart
+- **Mouse + keyboard navigation** — click rows, scroll inside Claude, or use vim-style keys
+- **Command bar (`:q`)** — vim-style quit that tears down every managed session cleanly
+- **Crash-resilient** — pilot runs under a watchdog wrapper; reconciles with tmux on startup to adopt orphan windows
 
 ## Quick Start
 
 ```bash
-# Install
 uv venv && uv pip install -e .
-
-# Install Claude Code hooks (one-time)
-uv run task-pilot install-hooks
-
-# Launch (auto-scans on startup)
-uv run task-pilot ui
+task-pilot ui      # bootstrap or attach to tmux session
 ```
 
-For AI-powered titles and summaries, install [Codex CLI](https://github.com/openai/codex). Without it, titles fall back to the first user message.
+Running `task-pilot ui` is idempotent:
+- If the `task-pilot` tmux session does not exist, it is bootstrapped with the two-pane layout and pilot is launched in the left pane.
+- If it already exists, `task-pilot ui` attaches to it.
+- If you run it from inside a *different* tmux session, pilot prints actionable guidance instead of silently misbehaving.
+
+## Keybindings
+
+| Key               | Action                                                                 |
+|-------------------|------------------------------------------------------------------------|
+| `j` / `k` / `↑` / `↓` | Move selection in the left panel                                   |
+| `Enter`           | Switch to the selected session (two-step swap-pane) and focus right    |
+| `Tab`             | Toggle focus between the left panel and the right pane                 |
+| `n`               | New session — opens a dialog with recent directories + Tab completion  |
+| `x`               | Close the selected session (with confirmation)                         |
+| `r`               | Force refresh (also re-resolves git branch and transcript path)        |
+| `/`               | Search / filter rows by title or cwd substring                         |
+| `:`               | Open the command bar                                                   |
+| `:q` + `Enter`    | Quit pilot and kill every managed Claude Code process                  |
+
+There is intentionally no plain `q` quit key — `:q` is deliberately hard to mis-type, so no confirmation dialog is needed.
 
 ## Architecture
 
 ```
-SQLite DB  <──  Hooks (real-time)    <──  Claude Code sessions
-    |       <──  Scanner (auto-scan) <──  ~/.claude/ files
-    |       <──  Codex CLI (summary) <──  OpenAI (optional)
-    v
-  Textual TUI ── List View ── Detail View
+┌─── tmux session: task-pilot ──────────────────────┐
+│                                                    │
+│  Window: main                                      │
+│  ┌──────────────────┬──────────────────────────┐  │
+│  │                  │                          │  │
+│  │  pilot (Textual) │  Claude Code session     │  │
+│  │  left list       │  (currently selected)    │  │
+│  │                  │                          │  │
+│  └──────────────────┴──────────────────────────┘  │
+│                                                    │
+│  Window: _bg_<uuid1>  →  session A's pane (hidden)│
+│  Window: _bg_<uuid2>  →  session B's pane (hidden)│
+│  Window: _bg_<uuid3>  →  session C's pane (hidden)│
+│                                                    │
+└────────────────────────────────────────────────────┘
 ```
 
-### Summary Strategy
+- One dedicated tmux session: `task-pilot`.
+- Window `main` always has two panes: pilot on the left, the currently visible Claude Code session on the right.
+- Every other Claude Code session lives in its own `_bg_<uuid>` window. These windows are never displayed, but their Claude Code processes keep running.
+- On switching sessions, pilot runs a two-step `swap-pane`: step 1 returns the current pane to its home `_bg_*` window; step 2 brings the target pane into `main.1`.
+- On startup, pilot reconciles state: DB rows without a matching tmux window are dropped, and `_bg_*` windows without a DB row are adopted.
 
-| Scenario | Title | Summary | Cost |
-|----------|-------|---------|------|
-| Historical session (ended) | First user message (~60 chars) | Same | 0 |
-| Active session (discovered) | Codex AI -> fallback | Codex AI -> fallback | OpenAI token |
-| Session ends (hook) | Already generated | Already generated | 0 |
+## Platform Support
 
-### Modules
+| Platform                                 | Status        |
+|------------------------------------------|---------------|
+| macOS (iTerm2, Terminal.app, Kitty, …)   | Supported     |
+| Linux (any terminal with tmux)           | Supported     |
+| WSL2 on Windows                          | Supported     |
+| Remote Ubuntu via SSH                    | Recommended   |
+| VS Code Remote-SSH + integrated terminal | Supported     |
+| Native Windows (PowerShell, CMD, Git Bash) | Not supported — use WSL2 |
 
-| Layer | Description |
-|-------|-------------|
-| `summarizer.py` | AI title/summary via Codex CLI, heuristic fallback |
-| `db.py` | SQLite CRUD with schema auto-migration |
-| `hooks.py` | Claude Code hook installer + throttled event handlers |
-| `scanner.py` | Reads `~/.claude/` to discover sessions |
-| `cli.py` | Click CLI entry point |
-| `app.py` | Textual app shell with auto-scan on startup |
-| `screens/` | List screen + Detail screen |
-| `widgets/` | HeaderBar, TaskRow, ActionSteps, Timeline |
+## Requirements
 
-## Keybindings
-
-| Key | Action |
-|-----|--------|
-| `Enter` | Open task detail |
-| `Esc` | Go back / close search |
-| `c` | Resume session |
-| `d` | Mark task done |
-| `r` | Refresh |
-| `/` | Search |
-| `n` | New task |
-| `q` | Quit |
+- Python 3.11+
+- tmux 3.0+
+- Claude Code CLI (`claude`) in `PATH`
+- `psutil` Python package
+- A UTF-8 terminal with 256 colors (a Nerd Font is recommended for row separators and status icons)
 
 ## Development
 
 ```bash
-# Setup
 uv venv && uv pip install -e ".[dev]"
-
-# Run tests (106 tests)
-uv run pytest tests/ -v
-
-# Run the app
-uv run task-pilot ui
+.venv/bin/pytest tests/ -v   # 125+ tests
 ```
 
 ## Tech Stack
 
-- Python 3.11+
-- [Textual](https://textual.textualize.io/) — TUI framework
-- [Rich](https://rich.readthedocs.io/) — Terminal rendering
-- [Click](https://click.palletsprojects.com/) — CLI
-- SQLite3 — Local storage
-- [Codex CLI](https://github.com/openai/codex) — AI summaries (optional)
+- [Python 3.11+](https://www.python.org/)
+- [Textual](https://textual.textualize.io/) — TUI framework for the left panel
+- SQLite — persistent session state (`sessions` and `pilot_state` tables)
+- [tmux](https://github.com/tmux/tmux) 3.0+ — session orchestration and pane swapping
+- [psutil](https://github.com/giampaolo/psutil) — cross-platform process inspection to locate Claude Code transcripts
+- [Click](https://click.palletsprojects.com/) — CLI entry point

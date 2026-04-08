@@ -1,6 +1,6 @@
 <p align="center">
   <strong>Task Pilot</strong><br>
-  Claude Code 会话的终端任务管理面板
+  用于编排多个 Claude Code 会话的终端仪表盘
 </p>
 
 <p align="center">
@@ -13,100 +13,111 @@
 
 ## Task Pilot 是什么？
 
-Task Pilot 是一个终端仪表盘，用于追踪你的 Claude Code 会话、展示需要你处理的操作项，并支持恢复会话 —— 相当于多会话工作流的调度面板。
+Task Pilot 是一个终端控制面板，让你无需离开终端就能同时运行并切换多个 Claude Code 会话。它基于 **tmux** 构建：一个名为 `task-pilot` 的专用 tmux 会话内，左侧窗格运行 pilot 的 Textual UI，右侧窗格是当前可见的 Claude Code 会话。你在 pilot 中启动的其他每一个 Claude Code 会话都存活在隐藏的 `_bg_<uuid>` 窗口中，进程持续正常运行。
 
-**核心理念：** 你是 CPU（决策者），Claude Code 是 I/O（代码执行者）。当你同时操控多个会话时，很容易丢失上下文。Task Pilot 为你提供一个统一视图。
+当你在左侧列表中选中另一个会话时，pilot 使用**两步 swap-pane 协议**：第一步把当前可见会话的窗格送回它自己的 `_bg_*` 老家窗口，第二步再把目标会话的窗格交换进右侧主窗格。切换期间没有任何会话会被杀死、断开或重启。
+
+**范围（E1）：** pilot 只管理*你从 pilot 内部创建*的会话；在其他终端启动的会话有意不在此范围之内。
+
+**为什么要重写？** v0.1 依赖 Claude Code hooks + scanner + AI 摘要器。那套方案在内循环里烧 token，而且你仍然要切终端才能真正和 Claude 交互。tmux 模型同时解决了这两个问题：热路径上零 API 调用，右侧窗格就是一个真正的 Claude Code TUI，你可以直接在里面打字。
 
 ## 功能特性
 
-- **实时追踪** — Claude Code hooks 自动捕获会话事件（启动、心跳、中断、结束）
-- **自动扫描** — 启动时自动从 `~/.claude/` 发现已有会话，无需手动 scan
-- **AI 摘要** — 使用 [Codex CLI](https://github.com/openai/codex) 为活跃会话生成标题和摘要；历史会话使用首条用户消息（零成本）
-- **三栏仪表盘** — 任务按状态分组：需要操作 / 运行中 / 已完成
-- **详情视图** — 摘要、操作步骤清单、时间线
-- **恢复会话** — 按 `c` 在新终端中恢复任意会话
-- **搜索** — 按 `/` 按标题筛选任务
-- **自动刷新** — 每 5 秒更新仪表盘
-- **心跳节流** — 每个会话每 30 秒最多写一次 DB
-- **响应式** — 自适应终端宽度
+- **基于 tmux 的编排** — 无 hooks，无 API 调用，零 token 开销
+- **实时刷新** — 每 2 秒刷新，直接读取 `~/.claude/projects/*.jsonl`
+- **实时 token 计数** — tail 读取每个 transcript，累加 assistant 消息的 `input_tokens + output_tokens`
+- **状态检测** — `initializing` / `working` / `idle` / `unknown`，完全来源于本地 transcript 活动
+- **每会话上下文** — 每行显示工作目录（`~` 缩写）和 git 分支
+- **两步 swap-pane 切换** — 瞬时视觉切换，进程不重启
+- **鼠标 + 键盘导航** — 可以点击行、在 Claude 内部滚动，或使用 vim 风格按键
+- **命令栏（`:q`）** — vim 风格退出，干净地收尾所有被管理的会话
+- **抗崩溃** — pilot 在 watchdog 包装下运行；启动时与 tmux 对账，自动收养孤儿窗口
 
 ## 快速开始
 
 ```bash
-# 安装
 uv venv && uv pip install -e .
-
-# 安装 Claude Code hooks（仅需一次）
-uv run task-pilot install-hooks
-
-# 启动（自动扫描）
-uv run task-pilot ui
+task-pilot ui      # 引导创建或连接到 tmux 会话
 ```
 
-如需 AI 生成标题和摘要，请安装 [Codex CLI](https://github.com/openai/codex)。没有安装时，标题会降级为首条用户消息。
+`task-pilot ui` 是幂等的：
+- 如果 `task-pilot` tmux 会话不存在，会引导创建双窗格布局，并在左侧启动 pilot。
+- 如果已存在，`task-pilot ui` 会直接 attach 上去。
+- 如果你在*另一个* tmux 会话内运行它，pilot 会打印可操作的指引，而不是默默出错。
+
+## 快捷键
+
+| 按键               | 功能                                                               |
+|--------------------|--------------------------------------------------------------------|
+| `j` / `k` / `↑` / `↓` | 在左侧面板移动选中                                             |
+| `Enter`            | 切换到选中会话（两步 swap-pane）并把焦点移到右侧                   |
+| `Tab`              | 在左侧面板与右侧窗格之间切换焦点                                   |
+| `n`                | 新建会话 — 打开对话框，带最近目录与 Tab 补全                       |
+| `x`                | 关闭选中会话（带确认）                                             |
+| `r`                | 强制刷新（同时重新解析 git 分支与 transcript 路径）                |
+| `/`                | 按标题或 cwd 子串过滤行                                            |
+| `:`                | 打开命令栏                                                         |
+| `:q` + `Enter`     | 退出 pilot，并杀死所有被管理的 Claude Code 进程                    |
+
+有意不提供裸 `q` 退出键 —— `:q` 足够难以误触，因此不需要确认框。
 
 ## 架构
 
 ```
-SQLite 数据库  <──  Hooks（实时写入）    <──  Claude Code 会话
-      |         <──  Scanner（自动扫描）  <──  ~/.claude/ 文件
-      |         <──  Codex CLI（摘要）    <──  OpenAI（可选）
-      v
-   Textual TUI ── 列表视图 ── 详情视图
+┌─── tmux 会话: task-pilot ──────────────────────────┐
+│                                                    │
+│  窗口: main                                        │
+│  ┌──────────────────┬──────────────────────────┐  │
+│  │                  │                          │  │
+│  │  pilot (Textual) │  Claude Code 会话         │  │
+│  │  左侧列表        │  （当前选中）              │  │
+│  │                  │                          │  │
+│  └──────────────────┴──────────────────────────┘  │
+│                                                    │
+│  窗口: _bg_<uuid1>  →  会话 A 的窗格（隐藏）       │
+│  窗口: _bg_<uuid2>  →  会话 B 的窗格（隐藏）       │
+│  窗口: _bg_<uuid3>  →  会话 C 的窗格（隐藏）       │
+│                                                    │
+└────────────────────────────────────────────────────┘
 ```
 
-### 摘要策略
+- 一个专用 tmux 会话：`task-pilot`。
+- `main` 窗口始终持有两个窗格：左侧 pilot，右侧当前可见的 Claude Code 会话。
+- 其他每个 Claude Code 会话存活在自己的 `_bg_<uuid>` 窗口里，这些窗口从不展示给用户，但其中的 Claude Code 进程一直在跑。
+- 切换会话时，pilot 执行两步 `swap-pane`：第一步把当前窗格送回它的 `_bg_*` 老家窗口；第二步把目标窗格交换进 `main.1`。
+- 启动时 pilot 与 tmux 对账：DB 中没有对应 tmux 窗口的行会被删除；tmux 中没有对应 DB 行的 `_bg_*` 窗口会被收养。
 
-| 场景 | 标题 | 摘要 | 成本 |
-|------|------|------|------|
-| 历史会话（已结束） | 首条用户消息（~60 字） | 同左 | 0 |
-| 活跃会话（新发现） | Codex AI -> 降级 | Codex AI -> 降级 | OpenAI token |
-| 会话结束（hook） | 已生成 | 已生成 | 0 |
+## 平台支持
 
-### 模块
+| 平台                                     | 状态              |
+|------------------------------------------|-------------------|
+| macOS（iTerm2、Terminal.app、Kitty 等）  | 支持              |
+| Linux（任何带 tmux 的终端）              | 支持              |
+| Windows 上的 WSL2                        | 支持              |
+| 通过 SSH 远程 Ubuntu                     | 推荐              |
+| VS Code Remote-SSH 集成终端              | 支持              |
+| 原生 Windows（PowerShell、CMD、Git Bash）| 不支持 —— 请使用 WSL2 |
 
-| 层级 | 说明 |
-|------|------|
-| `summarizer.py` | Codex CLI AI 摘要，本地降级方案 |
-| `db.py` | SQLite CRUD，自动建表 |
-| `hooks.py` | Claude Code hook 安装器 + 节流事件处理器 |
-| `scanner.py` | 读取 `~/.claude/` 发现会话 |
-| `cli.py` | Click CLI 入口 |
-| `app.py` | Textual 应用，启动时自动扫描 |
-| `screens/` | 列表页 + 详情页 |
-| `widgets/` | 头部栏、任务行、操作步骤、时间线 |
+## 运行要求
 
-## 快捷键
-
-| 按键 | 功能 |
-|------|------|
-| `Enter` | 打开任务详情 |
-| `Esc` | 返回 / 关闭搜索 |
-| `c` | 恢复会话 |
-| `d` | 标记完成 |
-| `r` | 刷新 |
-| `/` | 搜索 |
-| `n` | 新建任务 |
-| `q` | 退出 |
+- Python 3.11+
+- tmux 3.0+
+- `PATH` 中有 Claude Code CLI（`claude`）
+- `psutil` Python 包
+- 支持 UTF-8 和 256 色的终端（推荐使用 Nerd Font 以正确渲染分隔线与状态图标）
 
 ## 开发
 
 ```bash
-# 环境搭建
 uv venv && uv pip install -e ".[dev]"
-
-# 运行测试（106 个测试用例）
-uv run pytest tests/ -v
-
-# 运行应用
-uv run task-pilot ui
+.venv/bin/pytest tests/ -v   # 125+ 测试
 ```
 
 ## 技术栈
 
-- Python 3.11+
-- [Textual](https://textual.textualize.io/) — TUI 框架
-- [Rich](https://rich.readthedocs.io/) — 终端渲染
-- [Click](https://click.palletsprojects.com/) — CLI
-- SQLite3 — 本地存储
-- [Codex CLI](https://github.com/openai/codex) — AI 摘要（可选）
+- [Python 3.11+](https://www.python.org/)
+- [Textual](https://textual.textualize.io/) — 左侧面板的 TUI 框架
+- SQLite — 持久化会话状态（`sessions` 和 `pilot_state` 表）
+- [tmux](https://github.com/tmux/tmux) 3.0+ — 会话编排与窗格交换
+- [psutil](https://github.com/giampaolo/psutil) — 跨平台进程检查，用于定位 Claude Code transcript
+- [Click](https://click.palletsprojects.com/) — CLI 入口
