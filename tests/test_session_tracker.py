@@ -83,8 +83,12 @@ def test_switch_to_two_step_swap():
     tracker = SessionTracker(db, tmux=fake_tmux, session_name="task-pilot")
 
     tracker.switch_to("B")
-    # Two swap_pane calls: A back home, then B into main.1
-    assert fake_tmux.swap_pane.call_count == 2
+    # Exact two-step swap protocol: step 1 returns A home, step 2 brings B in.
+    from unittest.mock import call
+    assert fake_tmux.swap_pane.call_args_list == [
+        call("task-pilot:main.1", "task-pilot:_bg_A.0"),
+        call("task-pilot:main.1", "task-pilot:_bg_B.0"),
+    ]
     assert db.get_current_session_id() == "B"
 
 
@@ -98,4 +102,23 @@ def test_switch_to_skips_step1_when_no_current():
     tracker = SessionTracker(db, tmux=fake_tmux, session_name="task-pilot")
 
     tracker.switch_to("B")
-    assert fake_tmux.swap_pane.call_count == 1
+    from unittest.mock import call
+    assert fake_tmux.swap_pane.call_args_list == [
+        call("task-pilot:main.1", "task-pilot:_bg_B.0"),
+    ]
+
+
+def test_switch_to_noop_when_target_already_current():
+    """Re-selecting the visible session must NOT swap anything."""
+    db = make_db()
+    db.insert_session(Session(
+        id="A", tmux_window="_bg_A", cwd="/tmp",
+        git_branch=None, started_at=0.0, title=None,
+    ))
+    db.set_current_session_id("A")
+    fake_tmux = MagicMock()
+    tracker = SessionTracker(db, tmux=fake_tmux, session_name="task-pilot")
+
+    tracker.switch_to("A")
+    fake_tmux.swap_pane.assert_not_called()
+    assert db.get_current_session_id() == "A"

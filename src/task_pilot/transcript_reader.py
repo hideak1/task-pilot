@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -27,10 +26,10 @@ def _iter_records(path: Path):
 
 
 def sum_tokens(path: Path) -> int:
-    """Sum input + output + cache tokens across all assistant messages.
+    """Sum input + output tokens across all assistant messages.
 
-    Note: this approximates Claude's billing — exact counts depend on the
-    Anthropic API's accounting which we cannot reproduce without recomputation.
+    Per spec: only `input_tokens + output_tokens` (cache tokens excluded).
+    Note: this is an approximation of token usage; actual API billing may differ.
     """
     total = 0
     for record in _iter_records(path):
@@ -40,8 +39,6 @@ def sum_tokens(path: Path) -> int:
         usage = message.get("usage") or {}
         total += usage.get("input_tokens", 0) or 0
         total += usage.get("output_tokens", 0) or 0
-        total += usage.get("cache_creation_input_tokens", 0) or 0
-        total += usage.get("cache_read_input_tokens", 0) or 0
     return total
 
 

@@ -56,13 +56,19 @@ class SessionTracker:
         if target is None:
             return
         current_id = self.db.get_current_session_id()
-        if current_id and current_id != target_id:
+        # No-op if target is already visible — otherwise the second swap below
+        # would swap main.1's (visible target) pane OUT to an empty _bg window.
+        if current_id == target_id:
+            return
+        if current_id:
             current = self.db.get_session(current_id)
             if current:
+                # Step 1: return current's pane home to its _bg window
                 self.tmux.swap_pane(
                     f"{self.session_name}:main.1",
                     f"{self.session_name}:{current.tmux_window}.0",
                 )
+        # Step 2: bring target's pane from its home into main.1
         self.tmux.swap_pane(
             f"{self.session_name}:main.1",
             f"{self.session_name}:{target.tmux_window}.0",
