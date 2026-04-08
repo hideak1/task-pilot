@@ -28,8 +28,28 @@ class TaskPilotTextualApp(App):
 
 
 def main() -> None:
-    app = TaskPilotTextualApp()
-    app.run()
+    import sys
+    import time
+
+    if "--watchdog" not in sys.argv:
+        app = TaskPilotTextualApp()
+        app.run()
+        return
+
+    crashes = []
+    while True:
+        try:
+            app = TaskPilotTextualApp()
+            app.run()
+            return
+        except Exception as e:
+            now = time.time()
+            crashes = [c for c in crashes if now - c < 60] + [now]
+            if len(crashes) >= 3:
+                print(f"Pilot crashed 3 times in 60s; giving up. Last error: {e}")
+                return
+            print(f"Pilot crashed: {e}; restarting in 1s...")
+            time.sleep(1)
 
 
 if __name__ == "__main__":

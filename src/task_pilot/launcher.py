@@ -10,8 +10,7 @@ import sys
 from task_pilot import tmux
 
 SESSION_NAME = "task-pilot"
-PLACEHOLDER_LEFT = "echo 'pilot placeholder — Phase 1'"
-PLACEHOLDER_RIGHT = "echo 'right pane placeholder — Phase 1'"
+PLACEHOLDER_RIGHT = "echo 'Press n in the left pane to create a new Claude Code session'"
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -50,8 +49,8 @@ def bootstrap_tmux_session() -> None:
     tmux.unbind_key("root", "WheelUpPane")
     tmux.unbind_key("root", "WheelDownPane")
     tmux.split_window(f"{SESSION_NAME}:main", percent=70, horizontal=True)
-    # Phase 1 placeholders
-    tmux.send_keys(f"{SESSION_NAME}:main.0", PLACEHOLDER_LEFT)
+    tmux.send_keys(f"{SESSION_NAME}:main.0",
+                   "exec python -m task_pilot.textual_app --watchdog")
     tmux.send_keys(f"{SESSION_NAME}:main.1", PLACEHOLDER_RIGHT)
 
 
