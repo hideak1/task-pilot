@@ -49,8 +49,12 @@ def bootstrap_tmux_session() -> None:
     tmux.unbind_key("root", "WheelUpPane")
     tmux.unbind_key("root", "WheelDownPane")
     tmux.split_window(f"{SESSION_NAME}:main", percent=70, horizontal=True)
+    # Use the CURRENT python interpreter (sys.executable). This is the venv python
+    # when launched via `uv run task-pilot ui`. Without this, tmux's default shell
+    # would call system `python` which doesn't have task_pilot installed.
+    python_cmd = sys.executable
     tmux.send_keys(f"{SESSION_NAME}:main.0",
-                   "exec python -m task_pilot.textual_app --watchdog")
+                   f"exec {python_cmd} -m task_pilot.textual_app --watchdog")
     tmux.send_keys(f"{SESSION_NAME}:main.1", PLACEHOLDER_RIGHT)
 
 
@@ -61,7 +65,9 @@ def main() -> None:
     outer = get_outer_tmux_session()
 
     if outer == SESSION_NAME:
-        print("Already inside task-pilot session. Phase 1 placeholder.")
+        # Already inside task-pilot tmux session — run the Textual app directly.
+        from task_pilot.textual_app import main as textual_main
+        textual_main()
         return
 
     if outer is not None:
