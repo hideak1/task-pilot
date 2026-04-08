@@ -38,7 +38,7 @@ class ListScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with ScrollableContainer(id="rows"):
-            yield Static("Loading...", id="empty")
+            yield Static("Loading...")
         yield Footer()
 
     def on_mount(self) -> None:
