@@ -32,7 +32,7 @@ class SessionTracker:
         """
         from task_pilot.git_branch import current_branch
         from task_pilot.transcript_reader import sum_tokens, last_activity_timestamp, extract_first_user_message
-        from task_pilot.transcript_resolver import resolve_by_cwd_and_time, resolve_by_pid
+        from task_pilot.transcript_resolver import resolve_by_cwd_and_time
         from task_pilot.models import SessionState
         import time
 
@@ -66,7 +66,12 @@ class SessionTracker:
                         title = clean_title(first)
                         self.db.update_session(s.id, title=title)
             else:
-                state.status = "initializing"
+                # No transcript yet — initializing for the first 30 seconds,
+                # then unknown (Claude Code may have failed to start or is hung)
+                if time.time() - s.started_at > 30:
+                    state.status = "unknown"
+                else:
+                    state.status = "initializing"
 
             # Git branch (cached unless forced)
             if force or s.git_branch is None:

@@ -19,11 +19,12 @@ def resolve_by_pid(shell_pid: int) -> str | None:
         for child in proc.children(recursive=True):
             try:
                 name = child.name()
+                cmdline = child.cmdline()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-            if name == "claude" or (child.cmdline() and child.cmdline()[0].endswith("claude")):
+            if name == "claude" or (cmdline and cmdline[0].endswith("claude")):
                 return _claude_session_id_for_pid(child.pid)
-    except psutil.NoSuchProcess:
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
         return None
     return None
 

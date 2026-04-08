@@ -135,3 +135,27 @@ def test_refresh_state_returns_dict_for_all_sessions(tmp_path):
     states = tracker.refresh_state()
     assert "x" in states
     assert states["x"].status in ("initializing", "working", "idle", "unknown")
+
+
+def test_refresh_state_initializing_when_session_just_created():
+    db = make_db()
+    db.insert_session(Session(
+        id="new", tmux_window="_bg_new", cwd="/tmp",
+        git_branch=None, started_at=time.time(), title=None,
+    ))
+    fake_tmux = MagicMock()
+    tracker = SessionTracker(db, tmux=fake_tmux)
+    states = tracker.refresh_state()
+    assert states["new"].status == "initializing"
+
+
+def test_refresh_state_unknown_after_30s_no_transcript():
+    db = make_db()
+    db.insert_session(Session(
+        id="stale", tmux_window="_bg_stale", cwd="/tmp",
+        git_branch=None, started_at=time.time() - 60, title=None,
+    ))
+    fake_tmux = MagicMock()
+    tracker = SessionTracker(db, tmux=fake_tmux)
+    states = tracker.refresh_state()
+    assert states["stale"].status == "unknown"
