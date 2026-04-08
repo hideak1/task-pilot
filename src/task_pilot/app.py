@@ -37,7 +37,9 @@ class TaskPilotApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._run_scan()
+        # No auto-scan — only show sessions tracked by hooks going forward.
+        # User can manually trigger a scan with `task-pilot scan` if needed.
+        pass
 
     def _run_scan(self) -> None:
         try:
