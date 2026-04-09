@@ -7,7 +7,13 @@ from pathlib import Path
 
 from task_pilot.models import Session
 
-SCHEMA = """
+# v0.1 tables (tasks, action_items, timeline_events, old sessions) are
+# dropped on startup. v0.1 data is not preserved — the spec explicitly
+# says "no migration". The `sessions` table here has a different schema
+# from v0.1's `sessions` table, so we must drop the old one first.
+_V01_TABLES = ("action_items", "timeline_events", "tasks")
+
+SCHEMA_V02 = """
 CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT PRIMARY KEY,
     tmux_window     TEXT NOT NULL UNIQUE,
@@ -24,12 +30,32 @@ CREATE TABLE IF NOT EXISTS pilot_state (
 """
 
 
+def _is_v01_sessions_schema(conn: sqlite3.Connection) -> bool:
+    """Return True if `sessions` table has v0.1 columns (session_id, not id)."""
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    except sqlite3.OperationalError:
+        return False
+    return "session_id" in cols and "id" not in cols
+
+
 class Database:
     def __init__(self, db_path: str | Path):
         self.path = str(db_path)
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(SCHEMA)
+        self._migrate_from_v01()
+        self.conn.executescript(SCHEMA_V02)
+        self.conn.commit()
+
+    def _migrate_from_v01(self) -> None:
+        """Drop any leftover v0.1 tables so the v0.2 schema can be created."""
+        # Drop all v0.1-only tables
+        for tbl in _V01_TABLES:
+            self.conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+        # If sessions table has the old schema, drop it too
+        if _is_v01_sessions_schema(self.conn):
+            self.conn.execute("DROP TABLE IF EXISTS sessions")
         self.conn.commit()
 
     def close(self) -> None:

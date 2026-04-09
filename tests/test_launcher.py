@@ -152,11 +152,13 @@ def test_get_outer_tmux_handles_subprocess_error():
 
 # ── main() decision tree ──────────────────────────────────
 
-def test_main_inside_task_pilot_session_returns_early():
-    """If we're already inside task-pilot, just print and return."""
+def test_main_inside_task_pilot_session_runs_textual_app():
+    """If we're already inside task-pilot, run the Textual app directly."""
     with patch("task_pilot.launcher.pre_flight_checks"):
         with patch("task_pilot.launcher.get_outer_tmux_session", return_value="task-pilot"):
-            launcher.main()  # should not raise, should not call execvp
+            with patch("task_pilot.textual_app.main") as mock_textual:
+                launcher.main()
+                mock_textual.assert_called_once()
 
 
 def test_main_inside_other_tmux_with_pilot_session_exists_exits():
