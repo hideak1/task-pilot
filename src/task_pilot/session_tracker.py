@@ -74,12 +74,12 @@ class SessionTracker:
                 # Status (always recompute — it's time-based)
                 if state.last_activity == 0:
                     state.status = "initializing"
-                elif time.time() - state.last_activity < 30:
+                elif time.time() - state.last_activity < 10:
                     state.status = "working"
                 else:
                     state.status = "idle"
             else:
-                if time.time() - s.started_at > 30:
+                if time.time() - s.started_at > 15:
                     state.status = "unknown"
                 else:
                     state.status = "initializing"
@@ -258,6 +258,15 @@ class SessionTracker:
         try:
             self.tmux.run([
                 "select-pane", "-t", f"{self.session_name}:main.0",
+            ])
+        except Exception:
+            pass
+
+    def _focus_right(self) -> None:
+        """Give keyboard focus to the right pane (Claude Code)."""
+        try:
+            self.tmux.run([
+                "select-pane", "-t", f"{self.session_name}:main.1",
             ])
         except Exception:
             pass

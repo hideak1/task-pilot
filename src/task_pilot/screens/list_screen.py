@@ -279,7 +279,14 @@ class ListScreen(Screen):
         if self._selected_index >= len(sessions):
             self._selected_index = len(sessions) - 1
         target = sessions[self._selected_index]
+        current = self.db.get_current_session_id()
+        if current == target.id:
+            # Already showing this session — just move focus to the right pane
+            self.tracker._focus_right()
+            return
         self.tracker.switch_to(target.id)
+        title = target.title or "session"
+        self.notify(f"Switched to {title}", timeout=2)
 
     def action_open_command(self) -> None:
         from task_pilot.widgets.command_bar import CommandBar
