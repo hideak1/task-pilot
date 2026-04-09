@@ -64,9 +64,9 @@ class SessionRow(Widget, can_focus=True):
 
     DEFAULT_CSS = """
     SessionRow {
-        height: 5;
+        height: auto;
         margin: 0 1 1 1;
-        padding: 1 2;
+        padding: 0 2;
         background: #111318;
         border: solid #1a1d24;
         border-left: blank;
