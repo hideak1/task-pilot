@@ -75,6 +75,9 @@ def bootstrap_tmux_session() -> None:
         horizontal=True,
         command=welcome_cmd,
     )
+    # Focus the left pane (pilot) so keyboard input goes to it by default.
+    # Without this, split_window leaves focus on the new (right) pane.
+    tmux.run(["select-pane", "-t", f"{SESSION_NAME}:main.0"])
 
 
 def main() -> None:

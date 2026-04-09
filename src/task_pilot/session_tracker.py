@@ -164,8 +164,8 @@ class SessionTracker:
 
         Handles three cases:
         1. DB has a session but its tmux window is gone → drop from DB.
-        2. Claude exited but the keepalive wrapper kept the pane alive →
-           detect via `pane_current_command == "sleep"`, then clean up.
+        2. Claude exited but the keepalive wrapper (`exec cat`) kept the
+           pane alive → detect via pane_current_command, then clean up.
         3. tmux has a _bg_* window with no DB record → adopt it.
         """
         try:
@@ -174,36 +174,40 @@ class SessionTracker:
             return  # tmux not running
         bg_windows = {w for w in tmux_windows if w.startswith("_bg_")}
 
-        # Step 1: drop DB records whose tmux window is gone
+        # Collect sessions to remove (don't mutate while iterating)
+        to_remove: list[str] = []
+
         for s in self.db.list_sessions():
+            # Step 1: window gone entirely
             if s.tmux_window not in bg_windows:
-                self._remove_session(s.id)
+                to_remove.append(s.id)
                 continue
 
-            # Step 2: check if Claude exited (keepalive wrapper runs
-            # `sleep infinity` after claude exits, so pane_current_command
-            # changes from "claude" to "sleep").
-            # Check the pane wherever it currently lives:
+            # Step 2: check if Claude exited (keepalive runs `exec cat`)
             current_id = self.db.get_current_session_id()
             if current_id == s.id:
-                # This session is visible in main.1
                 target = f"{self.session_name}:main.1"
             else:
-                # This session is in its home _bg window
                 target = f"{self.session_name}:{s.tmux_window}.0"
 
-            pane_cmd = self.tmux.display_message(target, "#{pane_current_command}")
-            # After claude exits, the keepalive wrapper runs `exec cat`,
-            # so pane_current_command changes from "claude"/"node" to "cat".
-            is_dead = pane_cmd in ("cat", "sleep", "") or (
-                self.tmux.display_message(target, "#{pane_dead}") == "1"
-            )
+            try:
+                pane_cmd = self.tmux.display_message(target, "#{pane_current_command}")
+            except Exception:
+                continue  # pane might be transitioning, skip this tick
 
-            if is_dead:
-                # Kill the bg window (if it still exists)
-                if s.tmux_window in bg_windows:
+            # "cat" = keepalive took over (claude exited)
+            # Don't treat empty string as dead — it may be a transient state
+            if pane_cmd == "cat":
+                # Kill the bg window
+                try:
                     self.tmux.kill_window(f"{self.session_name}:{s.tmux_window}")
-                self._remove_session(s.id)
+                except Exception:
+                    pass
+                to_remove.append(s.id)
+
+        # Apply removals
+        for sid in to_remove:
+            self._remove_session(sid)
 
         # Step 3: adopt orphan tmux windows that have no DB record
         existing_windows = {s.tmux_window for s in self.db.list_sessions()}
@@ -211,29 +215,37 @@ class SessionTracker:
             self._adopt_window(w)
 
     def _remove_session(self, session_id: str) -> None:
-        """Remove a session from DB and clear current if it was the visible one."""
+        """Remove a session from DB. If it was visible, restore the right pane."""
         current_id = self.db.get_current_session_id()
         self.db.delete_session(session_id)
         self._state_cache.pop(session_id, None)
         if current_id == session_id:
             self.db.clear_current_session()
-            # If there are still other sessions, switch to the first one.
-            # Otherwise restore the welcome banner in main.1.
             remaining = self.db.list_sessions()
             if remaining:
                 self.switch_to(remaining[0].id)
             else:
                 self._restore_welcome_pane()
+            # Always return focus to the left pane (pilot) after cleanup
+            self._focus_pilot()
 
     def _restore_welcome_pane(self) -> None:
         """Replace main.1 with a fresh welcome banner."""
         python_cmd = sys.executable
         try:
-            # Kill the current (dead) main.1 and respawn it with welcome
             self.tmux.run([
                 "respawn-pane", "-k",
                 "-t", f"{self.session_name}:main.1",
                 "sh", "-c", f"{python_cmd} -m task_pilot.welcome",
+            ])
+        except Exception:
+            pass
+
+    def _focus_pilot(self) -> None:
+        """Give keyboard focus back to the left pane (pilot)."""
+        try:
+            self.tmux.run([
+                "select-pane", "-t", f"{self.session_name}:main.0",
             ])
         except Exception:
             pass
