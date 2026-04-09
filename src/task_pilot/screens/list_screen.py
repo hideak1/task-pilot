@@ -13,6 +13,7 @@ from task_pilot.session_tracker import SessionTracker
 from task_pilot.widgets.session_row import SessionRow
 
 REFRESH_INTERVAL_SECONDS = 2.0
+RECONCILE_INTERVAL_TICKS = 5  # reconcile every N refresh ticks (= 10s)
 
 
 class ListScreen(Screen):
@@ -63,6 +64,8 @@ class ListScreen(Screen):
         self._selected_index = 0
         self._states: dict[str, SessionState] = {}
         self._search_query: str = ""
+        self._tick_count = 0
+        self._last_snapshot: str = ""  # fingerprint of last rendered state
 
     def compose(self) -> ComposeResult:
         with ScrollableContainer(id="rows"):
@@ -70,13 +73,37 @@ class ListScreen(Screen):
         yield Footer()
 
     async def on_mount(self) -> None:
-        await self.refresh_data()
+        await self.refresh_data(force=True)
         self.set_interval(REFRESH_INTERVAL_SECONDS, self.refresh_data)
 
     async def refresh_data(self, force: bool = False) -> None:
-        self.tracker.reconcile()
+        # Reconcile less often (subprocess-heavy: tmux list-windows + display-message)
+        self._tick_count += 1
+        if force or self._tick_count % RECONCILE_INTERVAL_TICKS == 0:
+            self.tracker.reconcile()
+
         self._states = self.tracker.refresh_state(force=force)
-        await self._render_rows()
+
+        # Only re-render if the data actually changed (prevents flicker)
+        snapshot = self._build_snapshot()
+        if snapshot != self._last_snapshot:
+            self._last_snapshot = snapshot
+            await self._render_rows()
+
+    def _build_snapshot(self) -> str:
+        """Build a fingerprint of the current display state.
+
+        If this string is the same as last time, skip the re-render.
+        """
+        sessions = self._filtered_sessions()
+        parts = [str(self._selected_index), self._search_query]
+        for s in sessions:
+            st = self._states.get(s.id)
+            parts.append(
+                f"{s.id}:{s.title}:{s.git_branch}:"
+                f"{st.token_count if st else 0}:{st.status if st else '?'}"
+            )
+        return "|".join(parts)
 
     def _filtered_sessions(self) -> list[Session]:
         sessions = self.db.list_sessions()

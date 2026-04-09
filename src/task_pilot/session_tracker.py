@@ -32,11 +32,14 @@ class SessionTracker:
         self.tmux = tmux
         self.session_name = session_name
         self._state_cache: dict[str, SessionState] = {}
+        self._transcript_mtime: dict[str, float] = {}  # session_id → last mtime
 
     def refresh_state(self, force: bool = False) -> dict[str, SessionState]:
         """Compute SessionState for every session in DB.
 
-        force=True re-resolves git branches and transcript paths (used by manual `r`).
+        Skips transcript re-reads if the file's mtime hasn't changed since
+        last tick (the main source of CPU/IO cost).
+        force=True re-resolves everything (git branches, transcript paths).
         """
         result: dict[str, SessionState] = {}
         for s in self.db.list_sessions():
@@ -49,26 +52,33 @@ class SessionTracker:
                 )
 
             if state.transcript_path and state.transcript_path.exists():
-                state.token_count = sum_tokens(state.transcript_path)
-                state.last_activity = last_activity_timestamp(state.transcript_path)
+                # Only re-read the transcript if mtime changed
+                try:
+                    current_mtime = state.transcript_path.stat().st_mtime
+                except OSError:
+                    current_mtime = 0
 
-                # Status
+                last_mtime = self._transcript_mtime.get(s.id, 0)
+                if force or current_mtime != last_mtime:
+                    self._transcript_mtime[s.id] = current_mtime
+                    state.token_count = sum_tokens(state.transcript_path)
+                    state.last_activity = last_activity_timestamp(state.transcript_path)
+
+                    # Title from first user message (only if not set yet)
+                    if not s.title:
+                        first = extract_first_user_message(state.transcript_path)
+                        if first:
+                            title = clean_title(first)
+                            self.db.update_session(s.id, title=title)
+
+                # Status (always recompute — it's time-based)
                 if state.last_activity == 0:
                     state.status = "initializing"
                 elif time.time() - state.last_activity < 30:
                     state.status = "working"
                 else:
                     state.status = "idle"
-
-                # Title from first user message (only if not set yet)
-                if not s.title:
-                    first = extract_first_user_message(state.transcript_path)
-                    if first:
-                        title = clean_title(first)
-                        self.db.update_session(s.id, title=title)
             else:
-                # No transcript yet — initializing for the first 30 seconds,
-                # then unknown (Claude Code may have failed to start or is hung)
                 if time.time() - s.started_at > 30:
                     state.status = "unknown"
                 else:
