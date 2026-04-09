@@ -9,7 +9,6 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
@@ -19,12 +18,7 @@ MAX_RECENT = 10
 
 
 class _DirItem(ListItem):
-    """ListItem that stores its directory path as a plain attribute.
-
-    Reading back the text via label.renderable is fragile across Textual
-    versions (the attribute was removed/renamed), so we store the path
-    explicitly instead.
-    """
+    """ListItem that stores its directory path as a plain attribute."""
 
     def __init__(self, path: str) -> None:
         super().__init__(Label(path))
@@ -81,6 +75,8 @@ class NewSessionDialog(ModalScreen[str | None]):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
+        Binding("up", "focus_list", "Up", show=False),
+        Binding("down", "focus_list", "Down", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -89,7 +85,7 @@ class NewSessionDialog(ModalScreen[str | None]):
     }
     NewSessionDialog #panel {
         width: 60;
-        height: 20;
+        height: 22;
         background: #181b22;
         border: solid #74c0fc;
         padding: 1 2;
@@ -102,26 +98,64 @@ class NewSessionDialog(ModalScreen[str | None]):
         background: #111318;
         color: #e2e4e9;
     }
+    NewSessionDialog #recent {
+        height: auto;
+        max-height: 10;
+    }
+    NewSessionDialog .hint {
+        color: #555869;
+        margin-top: 1;
+    }
     """
 
     def compose(self) -> ComposeResult:
+        dirs = recent_directories()
         with Vertical(id="panel"):
             yield Label("New Session", classes="title")
-            yield Label("Recent directories:")
-            items = [_DirItem(d) for d in recent_directories()]
-            yield ListView(*items, id="recent")
-            yield Label("Or type a path:")
+            if dirs:
+                yield Label("[#8b8fa3]Recent directories (arrow keys to select):[/]")
+                yield ListView(*[_DirItem(d) for d in dirs], id="recent")
+            yield Label("[#8b8fa3]Type a path (Tab to complete, Enter to create):[/]")
             yield Input(placeholder="/path/to/project", id="path")
-            yield Label("Enter: create   Esc: cancel", classes="hint")
+            yield Label(
+                "[#ffd43b]Enter[/] create  "
+                "[#ffd43b]Tab[/] complete  "
+                "[#ffd43b]Esc[/] cancel",
+                classes="hint",
+            )
 
     def on_mount(self) -> None:
-        # Focus the path input by default so the user can immediately type
-        self.query_one("#path", Input).focus()
+        # Focus the list first if there are recent dirs, so arrow keys work
+        try:
+            lv = self.query_one("#recent", ListView)
+            if len(lv.children) > 0:
+                lv.focus()
+            else:
+                self.query_one("#path", Input).focus()
+        except Exception:
+            self.query_one("#path", Input).focus()
+
+    def action_focus_list(self) -> None:
+        """Move focus to the recent dirs list (from the input)."""
+        try:
+            lv = self.query_one("#recent", ListView)
+            lv.focus()
+        except Exception:
+            pass
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         path = os.path.expanduser(event.value.strip())
-        if path and Path(path).exists():
-            self.dismiss(path)
+        if not path:
+            return
+        p = Path(path)
+        # Auto-create the directory if it doesn't exist
+        if not p.exists():
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                self.notify(f"Cannot create: {path}", severity="error")
+                return
+        self.dismiss(path)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         item = event.item
@@ -134,6 +168,10 @@ class NewSessionDialog(ModalScreen[str | None]):
             if inp.has_focus:
                 inp.value = complete_path(inp.value)
                 event.stop()
+                return
+            # Tab from list → focus input
+            inp.focus()
+            event.stop()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
