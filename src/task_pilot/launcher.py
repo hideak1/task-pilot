@@ -10,7 +10,6 @@ import sys
 from task_pilot import tmux
 
 SESSION_NAME = "task-pilot"
-PLACEHOLDER_RIGHT = "echo 'Press n in the left pane to create a new Claude Code session'"
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -65,10 +64,17 @@ def bootstrap_tmux_session() -> None:
     # Disable mouse-wheel copy-mode trap (spec lines 452-461)
     tmux.unbind_key("root", "WheelUpPane")
     tmux.unbind_key("root", "WheelDownPane")
-    # Add right pane for Claude Code sessions. -P prints info, -d means
-    # don't focus the new pane so pilot keeps focus on the left.
-    tmux.split_window(f"{SESSION_NAME}:main", percent=70, horizontal=True)
-    tmux.send_keys(f"{SESSION_NAME}:main.1", PLACEHOLDER_RIGHT)
+    # Add right pane running the welcome banner. Direct command (not
+    # send_keys) so there's no shell-init race. The welcome module sleeps
+    # forever after printing; pilot swaps this pane out on first
+    # create_session.
+    welcome_cmd = f"{python_cmd} -m task_pilot.welcome"
+    tmux.split_window(
+        f"{SESSION_NAME}:main",
+        percent=70,
+        horizontal=True,
+        command=welcome_cmd,
+    )
 
 
 def main() -> None:

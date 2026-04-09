@@ -29,10 +29,30 @@ class ListScreen(Screen):
 
     DEFAULT_CSS = """
     ListScreen { background: #0c0e12; }
-    ListScreen #empty {
-        color: #555869;
-        padding: 2 2;
-        text-style: italic;
+    ListScreen #empty-box {
+        width: 100%;
+        height: 100%;
+        align: center middle;
+    }
+    ListScreen .empty-logo {
+        color: #74c0fc;
+        text-style: bold;
+        text-align: center;
+    }
+    ListScreen .empty-title {
+        color: #e2e4e9;
+        text-style: bold;
+        text-align: center;
+        margin-top: 1;
+    }
+    ListScreen .empty-hint {
+        color: #8b8fa3;
+        text-align: center;
+        margin-top: 1;
+    }
+    ListScreen .empty-key {
+        color: #ffd43b;
+        text-style: bold;
     }
     """
 
@@ -73,7 +93,26 @@ class ListScreen(Screen):
         await container.remove_children()
         sessions = self._filtered_sessions()
         if not sessions:
-            await container.mount(Static("No sessions. Press n to create one."))
+            from textual.containers import Vertical
+            empty_box = Vertical(id="empty-box")
+            await container.mount(empty_box)
+            await empty_box.mount(Static(
+                "┌─┐\n"
+                "│ │\n"
+                "└─┘",
+                classes="empty-logo",
+            ))
+            await empty_box.mount(Static("Task Pilot", classes="empty-title"))
+            await empty_box.mount(Static(
+                "No sessions yet",
+                classes="empty-hint",
+            ))
+            await empty_box.mount(Static(
+                "[#ffd43b bold]n[/] new   "
+                "[#ffd43b bold]/[/] search   "
+                "[#ffd43b bold]:q[/] quit",
+                classes="empty-hint",
+            ))
             return
         # Clamp selection
         if self._selected_index >= len(sessions):

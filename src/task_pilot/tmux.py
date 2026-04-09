@@ -65,10 +65,21 @@ def kill_session(name: str) -> None:
     run(["kill-session", "-t", name])
 
 
-def split_window(target: str, percent: int = 70, horizontal: bool = True) -> None:
-    """Split a window. -h means horizontal split (left/right), -v vertical (top/bottom)."""
+def split_window(
+    target: str,
+    percent: int = 70,
+    horizontal: bool = True,
+    command: str | None = None,
+) -> None:
+    """Split a window. -h means horizontal split (left/right), -v vertical (top/bottom).
+
+    If `command` is given, it runs instead of the default shell in the new pane.
+    """
     flag = "-h" if horizontal else "-v"
-    run(["split-window", flag, "-t", target, "-l", f"{percent}%"], check=True)
+    args = ["split-window", flag, "-t", target, "-l", f"{percent}%"]
+    if command is not None:
+        args.extend(["sh", "-c", command])
+    run(args, check=True)
 
 
 def send_keys(target: str, text: str, enter: bool = True) -> None:

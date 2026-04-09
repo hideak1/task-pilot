@@ -48,18 +48,20 @@ def test_bootstrap_full_call_sequence():
     ns_kwargs = ns_call[2]
     assert "command" in ns_kwargs
     assert "task_pilot.textual_app" in ns_kwargs["command"]
-    # 3. mouse on, status off, both wheel unbinds, split, then send_keys for right
+    # 3. mouse on, status off, both wheel unbinds, split
     assert "set_option" in op_names
     assert op_names.count("unbind_key") == 2
     assert "split_window" in op_names
-    assert op_names.count("send_keys") == 1  # only main.1 placeholder
-    # 4. unbind_key happens before split_window
+    # 4. split_window is called with the welcome module command
+    sw_calls = [c for c in calls if c[0] == "split_window"]
+    assert len(sw_calls) == 1
+    sw_kwargs = sw_calls[0][2]
+    assert "command" in sw_kwargs
+    assert "task_pilot.welcome" in sw_kwargs["command"]
+    # 5. unbind_key happens before split_window
     first_unbind = op_names.index("unbind_key")
     first_split = op_names.index("split_window")
     assert first_unbind < first_split
-    # 5. split_window happens before send_keys
-    first_send = op_names.index("send_keys")
-    assert first_split < first_send
 
 
 def test_bootstrap_sets_mouse_and_status():
@@ -107,11 +109,12 @@ def test_bootstrap_unbinds_wheel_keys():
     assert "WheelDownPane" in keys_unbound
 
 
-def test_bootstrap_sends_keys_to_right_pane():
-    """Verify main.1 receives a placeholder send_keys call.
+def test_bootstrap_does_not_use_send_keys():
+    """Neither pane uses send_keys — both run their command directly.
 
-    main.0 runs the Textual app directly via new_session command arg,
-    so no send_keys is needed for the left pane.
+    main.0 runs pilot via new_session's command arg; main.1 runs the
+    welcome module via split_window's command arg. send_keys was racy
+    against shell initialization.
     """
     targets = []
     fakes = {
@@ -124,8 +127,7 @@ def test_bootstrap_sends_keys_to_right_pane():
     with patch.multiple("task_pilot.launcher.tmux", **fakes):
         launcher.bootstrap_tmux_session()
 
-    assert any("main.1" in t for t in targets)
-    assert not any("main.0" in t for t in targets)
+    assert targets == []
 
 
 # ── get_outer_tmux_session ────────────────────────────────
