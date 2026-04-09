@@ -7,6 +7,7 @@ modules. This keeps test mocking surgical.
 
 from __future__ import annotations
 
+import sys
 import time
 import uuid
 from typing import TYPE_CHECKING
@@ -89,7 +90,14 @@ class SessionTracker:
         """Create a new Claude Code session in a fresh _bg_<uuid> window."""
         sid = uuid.uuid4().hex[:12]
         window = f"_bg_{sid}"
-        self.tmux.new_window(self.session_name, window, cwd, "claude")
+        # Keepalive wrapper: when claude exits, `cat` keeps the pane alive
+        # by blocking on stdin forever. reconcile() detects ended sessions
+        # by checking pane_current_command == "cat".
+        # Note: `sleep infinity` doesn't exist on macOS, so we use `cat`.
+        self.tmux.new_window(
+            self.session_name, window, cwd,
+            "claude; exec cat",
+        )
         s = Session(
             id=sid,
             tmux_window=window,
@@ -102,13 +110,27 @@ class SessionTracker:
         return s
 
     def close_session(self, session_id: str) -> None:
-        """Kill the tmux window and remove the DB record."""
+        """Kill the tmux window and remove the DB record.
+
+        If this session is currently visible in main.1, its pane is swapped
+        back to its home window first so that killing it doesn't destroy
+        the main window's right-pane slot.
+        """
         s = self.db.get_session(session_id)
         if s is None:
             return
+        current_id = self.db.get_current_session_id()
+        if current_id == session_id:
+            # Swap the visible pane back home before killing it
+            self.tmux.swap_pane(
+                f"{self.session_name}:main.1",
+                f"{self.session_name}:{s.tmux_window}.0",
+            )
+            self.db.clear_current_session()
         target = f"{self.session_name}:{s.tmux_window}"
         self.tmux.kill_window(target)
         self.db.delete_session(session_id)
+        self._state_cache.pop(session_id, None)
 
     def switch_to(self, target_id: str) -> None:
         """Two-step swap: return current home, then bring target into main.1."""
@@ -138,10 +160,14 @@ class SessionTracker:
     # ── reconciliation ───────────────────────────────────────
 
     def reconcile(self) -> None:
-        """Sync DB with the live state of tmux windows."""
-        # Step 0: ensure main window exists (Phase 6 will recreate if missing)
-        # For now we assume main exists if we got this far.
+        """Sync DB with the live state of tmux windows.
 
+        Handles three cases:
+        1. DB has a session but its tmux window is gone → drop from DB.
+        2. Claude exited but the keepalive wrapper kept the pane alive →
+           detect via `pane_current_command == "sleep"`, then clean up.
+        3. tmux has a _bg_* window with no DB record → adopt it.
+        """
         try:
             tmux_windows = set(self.tmux.list_windows(self.session_name))
         except Exception:
@@ -151,12 +177,66 @@ class SessionTracker:
         # Step 1: drop DB records whose tmux window is gone
         for s in self.db.list_sessions():
             if s.tmux_window not in bg_windows:
-                self.db.delete_session(s.id)
+                self._remove_session(s.id)
+                continue
 
-        # Step 2: adopt orphan tmux windows that have no DB record
+            # Step 2: check if Claude exited (keepalive wrapper runs
+            # `sleep infinity` after claude exits, so pane_current_command
+            # changes from "claude" to "sleep").
+            # Check the pane wherever it currently lives:
+            current_id = self.db.get_current_session_id()
+            if current_id == s.id:
+                # This session is visible in main.1
+                target = f"{self.session_name}:main.1"
+            else:
+                # This session is in its home _bg window
+                target = f"{self.session_name}:{s.tmux_window}.0"
+
+            pane_cmd = self.tmux.display_message(target, "#{pane_current_command}")
+            # After claude exits, the keepalive wrapper runs `exec cat`,
+            # so pane_current_command changes from "claude"/"node" to "cat".
+            is_dead = pane_cmd in ("cat", "sleep", "") or (
+                self.tmux.display_message(target, "#{pane_dead}") == "1"
+            )
+
+            if is_dead:
+                # Kill the bg window (if it still exists)
+                if s.tmux_window in bg_windows:
+                    self.tmux.kill_window(f"{self.session_name}:{s.tmux_window}")
+                self._remove_session(s.id)
+
+        # Step 3: adopt orphan tmux windows that have no DB record
         existing_windows = {s.tmux_window for s in self.db.list_sessions()}
         for w in bg_windows - existing_windows:
             self._adopt_window(w)
+
+    def _remove_session(self, session_id: str) -> None:
+        """Remove a session from DB and clear current if it was the visible one."""
+        current_id = self.db.get_current_session_id()
+        self.db.delete_session(session_id)
+        self._state_cache.pop(session_id, None)
+        if current_id == session_id:
+            self.db.clear_current_session()
+            # If there are still other sessions, switch to the first one.
+            # Otherwise restore the welcome banner in main.1.
+            remaining = self.db.list_sessions()
+            if remaining:
+                self.switch_to(remaining[0].id)
+            else:
+                self._restore_welcome_pane()
+
+    def _restore_welcome_pane(self) -> None:
+        """Replace main.1 with a fresh welcome banner."""
+        python_cmd = sys.executable
+        try:
+            # Kill the current (dead) main.1 and respawn it with welcome
+            self.tmux.run([
+                "respawn-pane", "-k",
+                "-t", f"{self.session_name}:main.1",
+                "sh", "-c", f"{python_cmd} -m task_pilot.welcome",
+            ])
+        except Exception:
+            pass
 
     def _adopt_window(self, window: str) -> None:
         adopted_id = window[len("_bg_"):]
