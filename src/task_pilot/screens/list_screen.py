@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import ScrollableContainer
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, Static
+from textual.widgets import Static
 
 from task_pilot.db import Database
 from task_pilot.models import Session, SessionState
@@ -29,7 +29,35 @@ class ListScreen(Screen):
     ]
 
     DEFAULT_CSS = """
-    ListScreen { background: #0c0e12; }
+    ListScreen {
+        background: #0c0e12;
+    }
+
+    /* ── Header ── */
+    ListScreen #header {
+        dock: top;
+        height: 3;
+        background: #111318;
+        border-bottom: solid #1a1d24;
+        padding: 1 2;
+    }
+    ListScreen .header-logo {
+        color: #74c0fc;
+        text-style: bold;
+        width: auto;
+    }
+    ListScreen .header-stats {
+        color: #555869;
+        width: 1fr;
+        text-align: right;
+    }
+
+    /* ── Rows container ── */
+    ListScreen #rows {
+        padding: 1 0;
+    }
+
+    /* ── Empty state ── */
     ListScreen #empty-box {
         width: 100%;
         height: 100%;
@@ -51,9 +79,15 @@ class ListScreen(Screen):
         text-align: center;
         margin-top: 1;
     }
-    ListScreen .empty-key {
-        color: #ffd43b;
-        text-style: bold;
+
+    /* ── Bottom bar ── */
+    ListScreen #bottom-bar {
+        dock: bottom;
+        height: 1;
+        background: #111318;
+        padding: 0 2;
+        color: #555869;
+        border-top: solid #1a1d24;
     }
     """
 
@@ -68,9 +102,18 @@ class ListScreen(Screen):
         self._last_snapshot: str = ""  # fingerprint of last rendered state
 
     def compose(self) -> ComposeResult:
+        with Horizontal(id="header"):
+            yield Static("[bold #74c0fc]Task Pilot[/]", classes="header-logo")
+            yield Static("", classes="header-stats", id="stats")
         with ScrollableContainer(id="rows"):
             yield Static("Loading...")
-        yield Footer()
+        yield Static(
+            "[#ffd43b]n[/]:new  "
+            "[#ffd43b]x[/]:close  "
+            "[#ffd43b]/[/]:search  "
+            "[#ffd43b]:q[/]:quit",
+            id="bottom-bar",
+        )
 
     async def on_mount(self) -> None:
         await self.refresh_data(force=True)
@@ -115,12 +158,33 @@ class ListScreen(Screen):
             if q in (s.title or "").lower() or q in s.cwd.lower()
         ]
 
+    def _update_header_stats(self, sessions: list) -> None:
+        """Update the header stats counter."""
+        try:
+            stats_widget = self.query_one("#stats", Static)
+            working = sum(1 for s in sessions if self._states.get(s.id) and self._states[s.id].status == "working")
+            idle = sum(1 for s in sessions if self._states.get(s.id) and self._states[s.id].status == "idle")
+            total = len(sessions)
+            parts = []
+            if working:
+                parts.append(f"[#69db7c]{working} working[/]")
+            if idle:
+                parts.append(f"[#ffd43b]{idle} idle[/]")
+            if total and not working and not idle:
+                parts.append(f"[#8b8fa3]{total} session{'s' if total != 1 else ''}[/]")
+            elif total:
+                parts.append(f"[#555869]{total} total[/]")
+            stats_widget.update("  ".join(parts) if parts else "")
+        except Exception:
+            pass
+
     async def _render_rows(self) -> None:
         container = self.query_one("#rows", ScrollableContainer)
         await container.remove_children()
+        all_sessions = self.db.list_sessions()
+        self._update_header_stats(all_sessions)
         sessions = self._filtered_sessions()
         if not sessions:
-            from textual.containers import Vertical
             empty_box = Vertical(id="empty-box")
             await container.mount(empty_box)
             await empty_box.mount(Static(

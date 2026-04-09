@@ -16,9 +16,9 @@ def test_format_elapsed_hours():
 
 
 def test_format_tokens_thousands():
-    assert format_tokens(45000) == "45k tok"
-    assert format_tokens(999) == "999 tok"
-    assert format_tokens(1500) == "1.5k tok"
+    assert format_tokens(45000) == "45k"
+    assert format_tokens(999) == "999"
+    assert format_tokens(1500) == "1.5k"
 
 
 def test_abbrev_home(monkeypatch):

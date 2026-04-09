@@ -54,19 +54,19 @@ def test_format_elapsed_exactly_one_hour():
     assert format_elapsed(3600) == "1h 0m"
 
 def test_format_tokens_zero():
-    assert format_tokens(0) == "0 tok"
+    assert format_tokens(0) == "0"
 
 def test_format_tokens_999():
-    assert format_tokens(999) == "999 tok"
+    assert format_tokens(999) == "999"
 
 def test_format_tokens_1000_exact():
-    assert format_tokens(1000) == "1k tok"
+    assert format_tokens(1000) == "1k"
 
 def test_format_tokens_1234():
-    assert format_tokens(1234) == "1.2k tok"
+    assert format_tokens(1234) == "1.2k"
 
 def test_format_tokens_45000():
-    assert format_tokens(45000) == "45k tok"
+    assert format_tokens(45000) == "45k"
 
 
 def test_abbrev_home_no_match(monkeypatch):

@@ -1,13 +1,12 @@
-"""3-line row widget for the session list."""
+"""Card-style session row widget for the left panel."""
 
 from __future__ import annotations
 
 import os
 import time
-from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Static
@@ -15,10 +14,17 @@ from textual.widgets import Static
 from task_pilot.models import Session, SessionState
 
 STATUS_ICONS = {
-    "initializing": "\\[[#8b8fa3]…[/]]",
-    "working":      "\\[[#69db7c]●[/]]",
-    "idle":         "\\[[#ffd43b]◐[/]]",
-    "unknown":      "\\[[#ff6b6b]?[/]]",
+    "initializing": "[#8b8fa3]…[/]",
+    "working":      "[#69db7c]●[/]",
+    "idle":         "[#ffd43b]◐[/]",
+    "unknown":      "[#ff6b6b]?[/]",
+}
+
+STATUS_LABELS = {
+    "initializing": "[#8b8fa3]starting[/]",
+    "working":      "[#69db7c]working[/]",
+    "idle":         "[#ffd43b]idle[/]",
+    "unknown":      "[#ff6b6b]unknown[/]",
 }
 
 
@@ -36,9 +42,9 @@ def format_elapsed(seconds: float) -> str:
 def format_tokens(n: int) -> str:
     if n >= 1000:
         if n % 1000 == 0:
-            return f"{n // 1000}k tok"
-        return f"{n / 1000:.1f}k tok"
-    return f"{n} tok"
+            return f"{n // 1000}k"
+        return f"{n / 1000:.1f}k"
+    return str(n)
 
 
 def abbrev_home(path: str) -> str:
@@ -49,7 +55,7 @@ def abbrev_home(path: str) -> str:
 
 
 class SessionRow(Widget, can_focus=True):
-    """A 3-line row showing one session."""
+    """A card-style row showing one session with status, title, cwd, branch, time, tokens."""
 
     class Selected(Message):
         def __init__(self, session_id: str) -> None:
@@ -58,20 +64,48 @@ class SessionRow(Widget, can_focus=True):
 
     DEFAULT_CSS = """
     SessionRow {
-        height: 4;
-        padding: 0 1;
+        height: 5;
+        margin: 0 1 1 1;
+        padding: 1 2;
         background: #111318;
-        border-bottom: solid #181b22;
+        border: solid #1a1d24;
+        border-left: blank;
+    }
+    SessionRow:hover {
+        background: #161921;
     }
     SessionRow.selected {
-        background: #181b22;
+        background: #161921;
         border-left: thick #74c0fc;
+    }
+    SessionRow .row-line1 {
+        height: 1;
     }
     SessionRow .row-title {
         color: #e2e4e9;
+        width: 1fr;
+    }
+    SessionRow .row-status {
+        width: auto;
     }
     SessionRow .row-meta {
         color: #555869;
+        height: 1;
+    }
+    SessionRow .row-stats {
+        height: 1;
+    }
+    SessionRow .row-elapsed {
+        color: #8b8fa3;
+        width: auto;
+    }
+    SessionRow .row-sep {
+        color: #333;
+        width: auto;
+    }
+    SessionRow .row-tokens {
+        color: #8b8fa3;
+        width: auto;
     }
     """
 
@@ -83,26 +117,35 @@ class SessionRow(Widget, can_focus=True):
             self.add_class("selected")
 
     def compose(self) -> ComposeResult:
-        title = self.session_data.title or "New session"
-        if len(title) > 32:
-            title = title[:29] + "..."
-        cursor = "[#74c0fc]▸[/] " if self.has_class("selected") else "  "
-        icon = STATUS_ICONS.get(self.session_state.status, "?")
-        line1 = f"{cursor}{title}    {icon}"
+        s = self.session_data
+        st = self.session_state
 
-        cwd = abbrev_home(self.session_data.cwd)
-        if self.session_data.git_branch:
-            line2 = f"{cwd} · {self.session_data.git_branch}"
+        # Line 1: title + status icon
+        title = s.title or "New session"
+        if len(title) > 40:
+            title = title[:37] + "..."
+        icon = STATUS_ICONS.get(st.status, "?")
+        status_label = STATUS_LABELS.get(st.status, "")
+
+        with Horizontal(classes="row-line1"):
+            yield Static(f"[bold]{title}[/]", classes="row-title")
+            yield Static(f"{icon} {status_label}", classes="row-status")
+
+        # Line 2: cwd + branch
+        cwd = abbrev_home(s.cwd)
+        if s.git_branch:
+            meta = f"[#555869]{cwd}[/] [#74c0fc]({s.git_branch})[/]"
         else:
-            line2 = cwd
+            meta = f"[#555869]{cwd}[/]"
+        yield Static(meta, classes="row-meta")
 
-        elapsed = format_elapsed(time.time() - self.session_data.started_at)
-        tokens = format_tokens(self.session_state.token_count)
-        line3 = f"{elapsed} · {tokens}"
-
-        yield Static(line1, classes="row-title")
-        yield Static(line2, classes="row-meta")
-        yield Static(line3, classes="row-meta")
+        # Line 3: elapsed + tokens
+        elapsed = format_elapsed(time.time() - s.started_at)
+        tokens = format_tokens(st.token_count)
+        with Horizontal(classes="row-stats"):
+            yield Static(f"[#8b8fa3]{elapsed}[/]", classes="row-elapsed")
+            yield Static("[#333] · [/]", classes="row-sep")
+            yield Static(f"[#8b8fa3]{tokens} tok[/]", classes="row-tokens")
 
     def on_click(self) -> None:
         self.post_message(self.Selected(self.session_data.id))
