@@ -174,8 +174,9 @@ class SessionTracker:
             return  # tmux not running
         bg_windows = {w for w in tmux_windows if w.startswith("_bg_")}
 
-        # Collect sessions to remove (don't mutate while iterating)
+        # Collect sessions to remove and windows we killed (don't mutate while iterating)
         to_remove: list[str] = []
+        killed_windows: set[str] = set()
 
         for s in self.db.list_sessions():
             # Step 1: window gone entirely
@@ -196,22 +197,23 @@ class SessionTracker:
                 continue  # pane might be transitioning, skip this tick
 
             # "cat" = keepalive took over (claude exited)
-            # Don't treat empty string as dead — it may be a transient state
             if pane_cmd == "cat":
-                # Kill the bg window
                 try:
                     self.tmux.kill_window(f"{self.session_name}:{s.tmux_window}")
                 except Exception:
                     pass
+                killed_windows.add(s.tmux_window)
                 to_remove.append(s.id)
 
         # Apply removals
         for sid in to_remove:
             self._remove_session(sid)
 
-        # Step 3: adopt orphan tmux windows that have no DB record
+        # Step 3: adopt orphan tmux windows that have no DB record.
+        # Exclude windows we just killed (they're in the stale bg_windows set
+        # but no longer exist in tmux).
         existing_windows = {s.tmux_window for s in self.db.list_sessions()}
-        for w in bg_windows - existing_windows:
+        for w in bg_windows - existing_windows - killed_windows:
             self._adopt_window(w)
 
     def _remove_session(self, session_id: str) -> None:
