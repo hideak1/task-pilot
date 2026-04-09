@@ -18,6 +18,19 @@ HISTORY_FILE = Path.home() / ".claude" / "history.jsonl"
 MAX_RECENT = 10
 
 
+class _DirItem(ListItem):
+    """ListItem that stores its directory path as a plain attribute.
+
+    Reading back the text via label.renderable is fragile across Textual
+    versions (the attribute was removed/renamed), so we store the path
+    explicitly instead.
+    """
+
+    def __init__(self, path: str) -> None:
+        super().__init__(Label(path))
+        self.path = path
+
+
 def recent_directories() -> list[str]:
     """Read ~/.claude/history.jsonl and return up to MAX_RECENT unique projects."""
     if not HISTORY_FILE.exists():
@@ -95,11 +108,15 @@ class NewSessionDialog(ModalScreen[str | None]):
         with Vertical(id="panel"):
             yield Label("New Session", classes="title")
             yield Label("Recent directories:")
-            items = [ListItem(Label(d), id=f"d_{i}") for i, d in enumerate(recent_directories())]
+            items = [_DirItem(d) for d in recent_directories()]
             yield ListView(*items, id="recent")
             yield Label("Or type a path:")
             yield Input(placeholder="/path/to/project", id="path")
             yield Label("Enter: create   Esc: cancel", classes="hint")
+
+    def on_mount(self) -> None:
+        # Focus the path input by default so the user can immediately type
+        self.query_one("#path", Input).focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         path = os.path.expanduser(event.value.strip())
@@ -107,8 +124,9 @@ class NewSessionDialog(ModalScreen[str | None]):
             self.dismiss(path)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        label = event.item.query_one(Label)
-        self.dismiss(str(label.renderable))
+        item = event.item
+        if isinstance(item, _DirItem):
+            self.dismiss(item.path)
 
     def on_key(self, event) -> None:
         if event.key == "tab":
